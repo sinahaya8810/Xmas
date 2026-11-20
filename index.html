@@ -1,0 +1,1611 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>ASCII 3D Christmas Tree</title>
+<style>
+  html,body{margin:0;height:100%;background:#03050c;overflow:hidden;-webkit-user-select:none;user-select:none;touch-action:manipulation;}
+  #c{position:fixed;left:0;top:0;width:100%;display:block;}
+  .fx{position:fixed;left:0;right:0;top:0;pointer-events:none;}
+  .scan{background:repeating-linear-gradient(to bottom,rgba(255,255,255,.02) 0 1px,transparent 1px 3px);}
+  .vig{background:radial-gradient(ellipse at 50% 45%,transparent 58%,rgba(0,0,0,.55) 100%);}
+  #status{position:fixed;left:0;right:0;padding:4px 10px 0;box-sizing:border-box;
+    font:10.5px/1.5 Menlo,Consolas,"DejaVu Sans Mono","Courier New",monospace;color:#7d8a99;
+    white-space:pre;overflow:hidden;pointer-events:none;background:#03050c;}
+  #code{position:fixed;left:0;right:0;bottom:0;background:#0b0d14;border-top:1px solid #1c2130;overflow:hidden;
+    font:11px Menlo,Consolas,"DejaVu Sans Mono","Courier New",monospace;pointer-events:none;}
+  #codeHead{height:24px;line-height:24px;padding:0 10px;color:#8e98a8;display:flex;justify-content:space-between;
+    border-bottom:1px solid #1c2130;background:#0e1119;font-size:11px;}
+  #codeHead .run{color:#9ab}
+  #codeHead .dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:#4ade80;margin-right:6px;vertical-align:middle;box-shadow:0 0 6px #4ade80;}
+  #codeView{position:absolute;left:0;right:0;top:25px;bottom:0;overflow:hidden;}
+  #codeInner{position:absolute;left:0;right:0;top:0;transition:transform .22s ease-out;will-change:transform;}
+  .ln{height:17px;line-height:17px;white-space:pre;color:#c9d1dc;}
+  .ln .no{display:inline-block;width:38px;text-align:right;padding-right:14px;color:#3b4252;}
+  .ln.cur{background:rgba(255,70,90,.13);box-shadow:inset 2px 0 0 #ff5a6e;}
+  .ln.cur .no{color:#ff8a98;}
+  .k{color:#c792ea}.f{color:#82aaff}.s{color:#c3e88d}.n{color:#f78c6c}.c{color:#546178;font-style:italic}.C{color:#ffcb6b}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="fx scan" id="scan"></div>
+<div class="fx vig" id="vig"></div>
+<div id="status"></div>
+<div id="code"><div id="codeHead"><span>xmas_tree.js</span><span class="run"><span class="dot"></span><span id="runTxt">running</span></span></div><div id="codeView"><div id="codeInner"></div></div></div>
+<script id="main">
+(function(){
+'use strict';
+
+/* ============================================================
+   基本ユーティリティ
+   ============================================================ */
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d', {alpha:false});
+const stEl = document.getElementById('status');
+const FONT = 'Menlo, Consolas, "DejaVu Sans Mono", "Liberation Mono", "Courier New", monospace';
+const PI2 = Math.PI * 2;
+
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+let rnd = mulberry32(1);          // ジオメトリ生成用（再現性あり）
+const fxr = mulberry32(98765);    // 演出用
+function gauss(){let u=rnd();if(u<1e-9)u=1e-9;return Math.sqrt(-2*Math.log(u))*Math.cos(PI2*rnd());}
+function clamp(v,a,b){return v<a?a:(v>b?b:v);}
+function smooth(a,b,x){const t=clamp((x-a)/(b-a),0,1);return t*t*(3-2*t);}
+function lerp(a,b,t){return a+(b-a)*t;}
+function hash(n){const s=Math.sin(n*12.9898+78.233)*43758.5453;return s-Math.floor(s);}
+function easeOutBack(t){if(t<=0)return 0;if(t>=1)return 1;const c1=2.1,c3=c1+1,u=t-1;return 1+c3*u*u*u+c1*u*u;}
+function ci(L,n){return L<=0?0:(L>=1?n-1:(L*n)|0);}
+const cc = s => s.charCodeAt(0);
+const codes = s => Array.from(s).map(cc);
+const CH = []; for(let i=32;i<127;i++) CH[i]=String.fromCharCode(i);
+function hsv(h,s,v){h=((h%1)+1)%1;const i=Math.floor(h*6),f=h*6-i,p=v*(1-s),q=v*(1-f*s),t=v*(1-(1-f)*s);
+  const m=[[v,t,p],[q,v,p],[p,v,t],[p,q,v],[t,p,v],[v,p,q]][i%6];return [m[0]*255,m[1]*255,m[2]*255];}
+
+/* ============================================================
+   文字ランプ（ブロック文字は不使用：数字と記号のみ）
+   ============================================================ */
+const RP_LEAF = codes('.,-:;=+*%#@');
+const RP_DIG  = codes('1742359608');      // 数字の濃度順
+const RP_SNOW = codes('.:+*');
+const RP_ORN  = codes('.:-=+o0%8@');
+const RP_TIN  = codes('.-~=*');
+const RP_RIB  = codes('.:-=%#');
+const RP_STAR = codes('.+*#$@');
+const RP_GIFT = codes('.:-=+*#%@');
+const RP_BOW  = codes('.:-=%8@');
+const RP_GND  = codes('.,-:-=+');
+const RP_BRANCH = codes('.-=~');
+const RP_SNOWB = codes('.:-=+*#%@');
+const RP_COAL  = codes('.:o08@');
+const RP_CARROT= codes('.:-=+*#');
+const RP_TWIG  = codes('.:;-~=');
+const RP_SCARF = codes('.:-=+#%');
+const RP_CLOTH = codes('.:-=+*#%@');
+const RP_FUR   = codes('.:+*%@');
+const RP_SKIN  = codes('.:-=+o0');
+const RP_LEATH = codes('.:-=#%@');
+const RP_GOLD  = codes('.+*#$@');
+const RP_SACK  = codes('.:=+#%');
+const RP_METAL = codes('.:-=+#%@');
+const C_AT=cc('@'),C_STAR=cc('*'),C_PLUS=cc('+'),C_COLON=cc(':'),C_DOT=cc('.'),C_QUOTE=cc("'"),
+      C_PIPE=cc('|'),C_SLASH=cc('/'),C_BSLASH=cc('\\'),C_LP=cc('('),C_RP=cc(')'),C_HASH=cc('#'),
+      C_PCT=cc('%'),C_ONE=cc('1'),C_EQ=cc('='),C_MINUS=cc('-'),C_CARET=cc('^'),C_ZERO=cc('0');
+
+/* ============================================================
+   タイムライン
+   ============================================================ */
+const TL = {
+  DROP_START:0.3, DROP_END:2.0,
+  RIPPLE:2.0, RIPPLE_SPEED:1.05,
+  SPREAD_START:2.15,            // 3つの光が中心から広がり始める
+  GROW_START:4.2, GROW_END:10.6,
+  STAR:10.75,
+  SP_START:11.3, SP_DUR:9.2,
+  GIFT_START:20.7, GIFT_GAP:0.36
+};
+TL.GIFT_END = TL.GIFT_START + 8*TL.GIFT_GAP + 0.5;
+TL.DONE = TL.GIFT_END + 0.3;
+
+/* ============================================================
+   ツリー形状：細長い円錐＋枝の房（フサフサ）
+   ============================================================ */
+const FOL_Y0=0.30, TREE_TOP=3.12, STAR_Y=3.27, D=7, R0=1.0, SP_TH0=0.0;
+// モデルごとに切り替わる値（build時に設定）
+let TOP_Y=3.12, CY=1.64, SP_TOP=2.98, SP_BOT=0.36, SP_TURNS=5, TOP_POS=[0,3.27,0];
+const MODELS=['tree','snowman','santa'];
+let model='tree', lastModel='', buildSeed=20261225;
+function pickModel(){
+  const q=(typeof location!=='undefined'&&location.search)?location.search.match(/m=(tree|snowman|santa)/):null;
+  if(q)return q[1];
+  let m;do{m=MODELS[Math.floor(Math.random()*MODELS.length)];}while(m===lastModel);return m;
+}
+function coneR(y){const t=clamp((TREE_TOP-y)/(TREE_TOP-FOL_Y0),0,1);return R0*Math.pow(t,0.86)+0.02;}
+function fluff(th,y){return 0.5*Math.sin(th*3+y*5.3)+0.3*Math.sin(th*7-y*11.7+1.3)+0.2*Math.sin(y*23+th*2);}
+function decoR(y,th){return coneR(y)*(1+0.08*fluff(th,y));}
+function rG(y){return coneR(y)*1.0+0.03;}
+// 生成物の外周（その高さより上0.35の範囲の最大半径）。幹や足元でも途切れず繋がる
+const PB=0.04; let PROF=new Float32Array(1);
+function outerR(y){const f=clamp(y/PB,0,PROF.length-1.001);const i=Math.floor(f),t=f-i;return Math.max(0.12,lerp(PROF[i],PROF[i+1],t)+0.06);}
+// 螺旋の光が (y, θ) を通過する時刻
+function spiralAt(y,th){
+  const sy=clamp((SP_TOP-y)/(SP_TOP-SP_BOT),0,1);
+  let base=(th-SP_TH0)/PI2; base-=Math.floor(base);
+  const k=Math.round(sy*SP_TURNS-base);
+  const s=clamp((base+k)/SP_TURNS,0,1);
+  return TL.SP_START+s*TL.SP_DUR+0.06;
+}
+
+/* ============================================================
+   マテリアル  [amb, dif, spec, shininess, rim, zBias, wrapLight]
+   ============================================================ */
+const MAT_LEAF=1,MAT_CORE=2,MAT_BARK=3,MAT_SNOW=4,MAT_ORN=5,MAT_ORNB=6,MAT_CAP=7,MAT_LIGHT=8,
+      MAT_TIN=9,MAT_RIB=10,MAT_STAR=11,MAT_GIFT=12,MAT_GRIB=13,MAT_BOW=14,MAT_GND=15,MAT_BRANCH=16;
+const MPAR=[];
+MPAR[MAT_LEAF]  =[0.20,0.95,0.10, 8,0.30, 0.000,1];
+MPAR[MAT_CORE]  =[0.16,0.40,0.00, 1,0.05, 0.010,1];
+MPAR[MAT_BARK]  =[0.22,0.95,0.06, 6,0.18, 0.000,0];
+MPAR[MAT_SNOW]  =[0.34,0.85,0.35,14,0.40,-0.006,1];
+MPAR[MAT_ORN]   =[0.14,0.85,1.10,42,0.35,-0.012,0];
+MPAR[MAT_ORNB]  =[0.20,0.85,0.90,30,0.30,-0.014,0];
+MPAR[MAT_CAP]   =[0.30,0.80,0.60,20,0.20,-0.020,0];
+MPAR[MAT_LIGHT] =[1.00,0.00,0.00, 1,0.00,-0.050,0];
+MPAR[MAT_TIN]   =[0.28,0.80,0.90,14,0.25,-0.030,0];
+MPAR[MAT_RIB]   =[0.20,0.85,0.75,26,0.25,-0.025,0];
+MPAR[MAT_STAR]  =[0.42,0.75,1.00,18,0.30,-0.020,0];
+MPAR[MAT_GIFT]  =[0.24,0.88,0.14,10,0.22, 0.000,0];
+MPAR[MAT_GRIB]  =[0.26,0.85,0.60,22,0.22,-0.004,0];
+MPAR[MAT_BOW]   =[0.24,0.85,0.70,22,0.25,-0.006,0];
+MPAR[MAT_GND]   =[0.30,0.72,0.00, 1,0.00, 0.030,0];
+MPAR[MAT_BRANCH]=[0.20,0.80,0.05, 6,0.10, 0.005,0];
+const MAT_SNOWB=17,MAT_COAL=18,MAT_CARROT=19,MAT_TWIG=20,MAT_SCARF=21,MAT_CLOTH=22,MAT_FUR=23,MAT_SKIN=24,MAT_LEATHER=25,MAT_GOLD=26,MAT_SACK=27,MAT_METAL=28;
+MPAR[MAT_SNOWB] =[0.52,0.72,0.22,10,0.40, 0.000,1];
+MPAR[MAT_COAL]  =[0.20,0.80,0.60,30,0.25,-0.012,0];
+MPAR[MAT_CARROT]=[0.26,0.85,0.40,18,0.20,-0.010,0];
+MPAR[MAT_TWIG]  =[0.24,0.90,0.05, 6,0.15,-0.006,0];
+MPAR[MAT_SCARF] =[0.24,0.88,0.08, 8,0.25,-0.012,1];
+MPAR[MAT_CLOTH] =[0.20,0.92,0.14, 9,0.30, 0.000,0];
+MPAR[MAT_FUR]   =[0.36,0.80,0.12, 8,0.40,-0.010,1];
+MPAR[MAT_SKIN]  =[0.30,0.80,0.40,16,0.30,-0.006,0];
+MPAR[MAT_LEATHER]=[0.16,0.80,0.75,28,0.30,-0.004,0];
+MPAR[MAT_GOLD]  =[0.30,0.80,1.00,30,0.30,-0.020,0];
+MPAR[MAT_SACK]  =[0.24,0.88,0.06, 6,0.20, 0.000,0];
+MPAR[MAT_METAL] =[0.20,0.80,1.00,26,0.35,-0.006,0];
+
+// ライト方向（ビュー空間：左上手前から）とハーフベクトル
+let LX=-0.52,LY=0.66,LZ=-0.54;{const l=Math.hypot(LX,LY,LZ);LX/=l;LY/=l;LZ/=l;}
+let HX=LX,HY=LY,HZ=LZ-1;{const l=Math.hypot(HX,HY,HZ);HX/=l;HY/=l;HZ/=l;}
+
+// 発光色パレット（0:白 1:暖色 2:赤 3:緑 4:青 5:マゼンタ 6:シアン 7:金）
+const LCOL=[[255,255,255],[255,190,90],[255,50,60],[70,255,110],[80,150,255],[255,80,220],[70,240,255],[255,205,90]];
+const SPR = LCOL.map(c=>{
+  const s=document.createElement('canvas'); s.width=s.height=64;
+  const g=s.getContext('2d'); const gr=g.createRadialGradient(32,32,0,32,32,32);
+  gr.addColorStop(0,`rgba(${c[0]},${c[1]},${c[2]},0.8)`);
+  gr.addColorStop(0.22,`rgba(${c[0]},${c[1]},${c[2]},0.3)`);
+  gr.addColorStop(0.55,`rgba(${c[0]},${c[1]},${c[2]},0.07)`);
+  gr.addColorStop(1,'rgba(0,0,0,0)');
+  g.fillStyle=gr; g.fillRect(0,0,64,64); return s;
+});
+
+/* ============================================================
+   シーン（点群）データ
+   ============================================================ */
+let N=0, NG=0;
+let pLx,pLy,pLz,pNx,pNy,pNz,pR,pG,pB,pAo,pAt,pSeed,pNw,pMat,pGrp,pEx,pNl;
+let gX,gY,gZ,gAt,gS;
+let NL=0,lX,lY,lZ,lTh,lC,lPh,lSp,lAt,lightB;
+let RD=null, RDN=0, RPIV=[], RKNEE=[], SPK_IDX=new Int32Array(0);
+let starG=0, ORN_N=0, GIFT_N=0, BRANCH_N=0, decoAts=[], giftAts=[], gifts=[];
+
+function build(){
+  rnd = mulberry32(buildSeed);
+  if(model==='tree'){TOP_Y=TREE_TOP;CY=1.64;SP_TOP=2.98;SP_BOT=0.36;SP_TURNS=5;TOP_POS=[0,STAR_Y,0];}
+  else if(model==='snowman'){TOP_Y=2.3;CY=1.15;SP_TOP=2.3;SP_BOT=0.28;SP_TURNS=4;}
+  else {TOP_Y=2.62;CY=1.15;SP_TOP=2.25;SP_BOT=0.35;SP_TURNS=4;}
+  decoAts=[]; NL=0; BRANCH_N=0; RDN=0;
+  lX=new Float32Array(0);lY=lX;lZ=lX;lTh=lX;lC=new Uint8Array(0);lPh=lX;lSp=lX;lAt=lX;lightB=new Float32Array(0);
+  const B={lx:[],ly:[],lz:[],nx:[],ny:[],nz:[],r:[],g:[],b:[],ao:[],at:[],seed:[],mat:[],grp:[],ex:[]};
+  const GR={x:[0],y:[0],z:[0],at:[0]};
+  const addG=(x,y,z,at)=>{GR.x.push(x);GR.y.push(y);GR.z.push(z);GR.at.push(at);return GR.x.length-1;};
+  const add=(x,y,z,nx,ny,nz,r,g,b,mat,ao,at,grp,ex)=>{
+    const l=Math.sqrt(nx*nx+ny*ny+nz*nz)||1;
+    B.lx.push(x);B.ly.push(y);B.lz.push(z);B.nx.push(nx/l);B.ny.push(ny/l);B.nz.push(nz/l);
+    B.r.push(r);B.g.push(g);B.b.push(b);B.mat.push(mat);B.ao.push(ao);B.at.push(at);
+    B.grp.push(grp);B.ex.push(ex);B.seed.push(rnd());
+  };
+  const treeAt=y=>TL.GROW_START+clamp(y/TOP_Y,0,1)*(TL.GROW_END-TL.GROW_START);
+  const pickY=(lo,hi)=>{for(let k=0;k<50;k++){const y=lo+rnd()*(hi-lo);if(rnd()<coneR(y)/R0)return y;}return lo;};
+
+  /* ---------- 形状サンプラー（楕円体・チューブ・トーラス・円盤） ---------- */
+  const rotV=(x,y,z,rx,ry,rz)=>{
+    let c=Math.cos(rz),s=Math.sin(rz);const x1=x*c-y*s,y1=x*s+y*c,z1=z;
+    c=Math.cos(rx);s=Math.sin(rx);const y2=y1*c-z1*s,z2=y1*s+z1*c;
+    c=Math.cos(ry);s=Math.sin(ry);return [x1*c+z2*s,y2,-x1*s+z2*c];
+  };
+  const invRotV=(x,y,z,rx,ry,rz)=>{
+    let c=Math.cos(-ry),s=Math.sin(-ry);const x1=x*c+z*s,z1=-x*s+z*c,y1=y;
+    c=Math.cos(-rx);s=Math.sin(-rx);const y2=y1*c-z1*s,z2=y1*s+z1*c;
+    c=Math.cos(-rz);s=Math.sin(-rz);return [x1*c-y2*s,x1*s+y2*c,z2];
+  };
+  const nrm3=(x,y,z)=>{const l=Math.hypot(x,y,z)||1;return [x/l,y/l,z/l];};
+  const mkE=(c,r,rot,disp)=>({c,r,rot:rot||[0,0,0],disp:disp||null});
+  // 楕円体の内側判定（1未満なら内側）
+  const eDist=(E,x,y,z)=>{const l=invRotV(x-E.c[0],y-E.c[1],z-E.c[2],E.rot[0],E.rot[1],E.rot[2]);
+    return Math.sqrt((l[0]/E.r[0])**2+(l[1]/E.r[1])**2+(l[2]/E.r[2])**2);};
+  // 楕円体表面上の点（方向 d へ）
+  const surfAt=(E,d)=>{const l=invRotV(d[0],d[1],d[2],E.rot[0],E.rot[1],E.rot[2]);
+    const f=nrm3(l[0]/E.r[0],l[1]/E.r[1],l[2]/E.r[2]);const s=E.disp?E.disp(f[0],f[1],f[2]):1;
+    const p=rotV(f[0]*E.r[0]*s,f[1]*E.r[1]*s,f[2]*E.r[2]*s,E.rot[0],E.rot[1],E.rot[2]);
+    return [E.c[0]+p[0],E.c[1]+p[1],E.c[2]+p[2]];};
+  const ellip=(E,dens,cb,shape)=>{
+    const [a,b,c]=E.r, p=1.6;
+    const area=4*Math.PI*Math.pow((Math.pow(a*b,p)+Math.pow(a*c,p)+Math.pow(b*c,p))/3,1/p);
+    const n=Math.ceil(area/(SP*SP*0.8)*dens)+12, off=rnd()*PI2;
+    const P=(fx,fy,fz)=>{const f=nrm3(fx,fy,fz);const s=E.disp?E.disp(f[0],f[1],f[2]):1;
+      let sx=1;if(shape)sx=shape(f[0],f[1],f[2]);return [f[0]*a*s*sx,f[1]*b*s,f[2]*c*s*sx];};
+    for(let k=0;k<n;k++){
+      const fy=1-2*(k+0.5)/n, fr=Math.sqrt(Math.max(0,1-fy*fy)), ph=k*2.399963+off;
+      const fx=Math.cos(ph)*fr, fz=Math.sin(ph)*fr;
+      const p0=P(fx,fy,fz);
+      let t1x=-fz,t1z=fx;let tl=Math.hypot(t1x,t1z);if(tl<1e-4){t1x=1;t1z=0;tl=1;}t1x/=tl;t1z/=tl;
+      const t2x=fy*t1z, t2y=fz*t1x-fx*t1z, t2z=-fy*t1x;
+      const e=0.012, A=P(fx+t1x*e,fy,fz+t1z*e), Bp=P(fx+t2x*e,fy+t2y*e,fz+t2z*e);
+      const ux=A[0]-p0[0],uy=A[1]-p0[1],uz=A[2]-p0[2],vx=Bp[0]-p0[0],vy=Bp[1]-p0[1],vz=Bp[2]-p0[2];
+      let nx=uy*vz-uz*vy,ny=uz*vx-ux*vz,nz=ux*vy-uy*vx;
+      if(nx*p0[0]+ny*p0[1]+nz*p0[2]<0){nx=-nx;ny=-ny;nz=-nz;}
+      const wp=rotV(p0[0],p0[1],p0[2],E.rot[0],E.rot[1],E.rot[2]);
+      const wn=rotV(nx,ny,nz,E.rot[0],E.rot[1],E.rot[2]);
+      cb(E.c[0]+wp[0],E.c[1]+wp[1],E.c[2]+wp[2],wn[0],wn[1],wn[2],fx,fy,fz);
+    }
+  };
+  const tube=(Pf,Rf,cb,dens)=>{
+    let L=0,pv=Pf(0);for(let i=1;i<=40;i++){const q=Pf(i/40);L+=Math.hypot(q[0]-pv[0],q[1]-pv[1],q[2]-pv[2]);pv=q;}
+    const st=SP*0.75/(dens||1);
+    const ns=Math.max(2,Math.ceil(L/st));
+    for(let i=0;i<=ns;i++){
+      const t=i/ns, C=Pf(t), t2=Math.min(1,t+0.01), t1=Math.max(0,t-0.01), C2=Pf(t2), C1=Pf(t1);
+      const T3=nrm3(C2[0]-C1[0],C2[1]-C1[1],C2[2]-C1[2]);
+      const segL=Math.hypot(C2[0]-C1[0],C2[1]-C1[1],C2[2]-C1[2])||1e-4;
+      let ux=0,uy=1,uz=0;if(Math.abs(T3[1])>0.9){ux=1;uy=0;}
+      const n1=nrm3(T3[1]*uz-T3[2]*uy,T3[2]*ux-T3[0]*uz,T3[0]*uy-T3[1]*ux);
+      const n2=[T3[1]*n1[2]-T3[2]*n1[1],T3[2]*n1[0]-T3[0]*n1[2],T3[0]*n1[1]-T3[1]*n1[0]];
+      const R=Rf(t), dR=(Rf(t2)-Rf(t1))/segL;
+      const nr=Math.max(5,Math.ceil(PI2*R/st));
+      for(let j=0;j<nr;j++){
+        const a=(j+(i%2)*0.5)/nr*PI2, ca2=Math.cos(a), sa2=Math.sin(a);
+        const dx=n1[0]*ca2+n2[0]*sa2, dy=n1[1]*ca2+n2[1]*sa2, dz=n1[2]*ca2+n2[2]*sa2;
+        cb(C[0]+dx*R,C[1]+dy*R,C[2]+dz*R,dx-T3[0]*dR,dy-T3[1]*dR,dz-T3[2]*dR,t,a);
+      }
+    }
+  };
+  const torusA=(C,axis,R,r,cb)=>{
+    const A=nrm3(axis[0],axis[1],axis[2]);
+    let ux=0,uy=1,uz=0;if(Math.abs(A[1])>0.9){ux=1;uy=0;}
+    const n1=nrm3(A[1]*uz-A[2]*uy,A[2]*ux-A[0]*uz,A[0]*uy-A[1]*ux);
+    const n2=[A[1]*n1[2]-A[2]*n1[1],A[2]*n1[0]-A[0]*n1[2],A[0]*n1[1]-A[1]*n1[0]];
+    const nu=Math.ceil(PI2*R/(SP*0.75)), nv=Math.max(6,Math.ceil(PI2*r/(SP*0.75)));
+    for(let i=0;i<nu;i++){
+      const u=(i+rnd()*0.3)/nu*PI2, cu=Math.cos(u), su=Math.sin(u);
+      const ex=n1[0]*cu+n2[0]*su, ey=n1[1]*cu+n2[1]*su, ez=n1[2]*cu+n2[2]*su;
+      for(let j=0;j<nv;j++){
+        const v=(j+(i%2)*0.5)/nv*PI2, cv2=Math.cos(v), sv=Math.sin(v);
+        const nx=ex*cv2+A[0]*sv, ny=ey*cv2+A[1]*sv, nz=ez*cv2+A[2]*sv;
+        cb(C[0]+ex*R+nx*r,C[1]+ey*R+ny*r,C[2]+ez*R+nz*r,nx,ny,nz,u,v);
+      }
+    }
+  };
+  const disk=(C,axis,R,cb)=>{
+    const A=nrm3(axis[0],axis[1],axis[2]);
+    let ux=0,uy=1,uz=0;if(Math.abs(A[1])>0.9){ux=1;uy=0;}
+    const n1=nrm3(A[1]*uz-A[2]*uy,A[2]*ux-A[0]*uz,A[0]*uy-A[1]*ux);
+    const n2=[A[1]*n1[2]-A[2]*n1[1],A[2]*n1[0]-A[0]*n1[2],A[0]*n1[1]-A[1]*n1[0]];
+    for(let rr=0;rr<=R;rr+=SP*0.75){
+      const nr=Math.max(1,Math.ceil(PI2*rr/(SP*0.75)));
+      for(let j=0;j<nr;j++){const a=j/nr*PI2;const x=Math.cos(a)*rr,y=Math.sin(a)*rr;
+        cb(C[0]+n1[0]*x+n2[0]*y,C[1]+n1[1]*x+n2[1]*y,C[2]+n1[2]*x+n2[2]*y,A[0],A[1],A[2],rr/R,a);}
+    }
+  };
+  const lumpy=(nb,ampA,ampB)=>{          // 手作り感のある凸凹
+    const bumps=[];for(let k=0;k<nb;k++){const u=rnd()*2-1,a=rnd()*PI2,r=Math.sqrt(1-u*u);
+      bumps.push([Math.cos(a)*r,u,Math.sin(a)*r,0.2+rnd()*0.32,ampA+rnd()*ampB]);}
+    const p1=rnd()*6,p2=rnd()*6;
+    return (fx,fy,fz)=>{let s=1+0.03*Math.sin(fx*4.3+p1)*Math.sin(fy*3.7+p2)+0.018*Math.sin(fz*7.1+fx*3+p1)+0.01*Math.sin(fx*13+fy*11+fz*9);
+      for(const q of bumps){const d=1-(fx*q[0]+fy*q[1]+fz*q[2]);s+=q[4]*Math.exp(-d/(q[3]*q[3]));}return s;};
+  };
+  // 飾りパーツ：グループ（アンカー位置からポンと出る）
+  const part=(ax,ay,az,at)=>{const gid=addG(ax,ay,az,at);decoAts.push(at);
+    return (x,y,z,nx,ny,nz,r,g,b,mat,ao,ex)=>add(x-ax,y-ay,z-az,nx,ny,nz,r,g,b,mat,ao,0,gid,ex||0);};
+  const angOf=(x,z)=>Math.atan2(z,x);
+  // 白いファー（フワフワの毛羽立ち付き）
+  const fur=(addF,x,y,z,nx,ny,nz,ao,at,base)=>{
+    const c=base||[240,238,230];const t=0.88+0.16*rnd();
+    addF(x,y,z,nx,ny,nz,c[0]*t,c[1]*t,c[2]*t,MAT_FUR,ao,at);
+    if(rnd()<0.75){const g1=Math.abs(gauss())*0.024;const n=nrm3(nx+(rnd()-0.5)*0.8,ny+(rnd()-0.5)*0.8,nz+(rnd()-0.5)*0.8);
+      const t2=0.9+0.14*rnd();addF(x+nx*g1+(rnd()-0.5)*0.012,y+ny*g1+(rnd()-0.5)*0.012,z+nz*g1+(rnd()-0.5)*0.012,n[0],n[1],n[2],c[0]*t2,c[1]*t2,c[2]*t2,MAT_FUR,ao*0.95,at);}
+  };
+  const add0=(x,y,z,nx,ny,nz,r,g,b,mat,ao,at)=>add(x,y,z,nx,ny,nz,r,g,b,mat,ao,at,0,0);
+
+  /* ===================== 雪だるま（3段・手作り感） ===================== */
+  function buildSnowman(){
+    const balls=[
+      mkE([0.03,0.56,-0.02],[0.64,0.56,0.62],[0.05,0.3,-0.04],lumpy(16,-0.03,0.09)),
+      mkE([-0.03,1.35,0.02],[0.46,0.42,0.45],[-0.06,1.1,0.06],lumpy(13,-0.03,0.08)),
+      mkE([0.02,1.97,0.04],[0.31,0.29,0.30],[0.08,2.0,-0.07],lumpy(10,-0.025,0.07))];
+    for(let bi=0;bi<3;bi++){
+      const E=balls[bi];
+      const sa=nrm3(rnd()-0.5,rnd()-0.5,rnd()-0.5);
+      ellip(E,1,(x,y,z,nx,ny,nz,fx,fy,fz)=>{
+        let ao=1;
+        for(let o=0;o<3;o++){if(o===bi)continue;const e=eDist(balls[o],x,y,z);if(e<0.96)return;ao*=0.5+0.5*smooth(0.96,1.32,e);}
+        if(y<0.012)return;
+        ao*=0.45+0.55*smooth(0.0,0.32,y);
+        const tone=(0.9+0.12*rnd())*(1+0.05*Math.sin((fx*sa[0]+fy*sa[1]+fz*sa[2])*30));
+        let r=236*tone,g=242*tone,b=252*tone;
+        if((bi===0&&y<0.5&&rnd()<0.035)||rnd()<0.006){const d=0.45+0.2*rnd();r=120*d;g=104*d;b=86*d;}   // 土や枯れ葉の粒
+        add0(x,y,z,nx+(rnd()-0.5)*0.18,ny+(rnd()-0.5)*0.18,nz+(rnd()-0.5)*0.18,r,g,b,MAT_SNOWB,ao,treeAt(y));
+      });
+    }
+    // ---- てっぺん：ブリキのバケツ帽子（星の代わりにポン）
+    const hc=[0.03,2.21,0.03], hrx=-0.18, hrz=0.22;
+    starG=addG(hc[0],hc[1],hc[2],TL.STAR);
+    const hp=(x,y,z,nx,ny,nz,tone,ao)=>{const p=rotV(x,y,z,hrx,0,hrz),n=rotV(nx,ny,nz,hrx,0,hrz);
+      const rust=rnd()<0.07;const c=rust?[140,78,44]:[150,160,172];
+      add(p[0],p[1],p[2],n[0],n[1],n[2],c[0]*tone,c[1]*tone,c[2]*tone,MAT_METAL,ao,0,starG,0);};
+    tube(t=>[0,t*0.28,0],t=>lerp(0.235,0.185,t),(x,y,z,nx,ny,nz,t,a)=>hp(x,y,z,nx,ny,nz,(0.85+0.2*rnd())*(0.9+0.1*Math.sin(a*3+t*9)),0.55+0.45*t));
+    disk([0,0.28,0],[0,1,0],0.185,(x,y,z,nx,ny,nz,q)=>hp(x,y,z,nx,ny,nz,0.85+0.2*rnd(),1));
+    torusA([0,0.005,0],[0,1,0],0.235,0.018,(x,y,z,nx,ny,nz)=>hp(x,y,z,nx,ny,nz,1.0,0.8));
+    const tp=rotV(0,0.16,0,hrx,0,hrz); TOP_POS=[hc[0]+tp[0],hc[1]+tp[1],hc[2]+tp[2]];
+    // ---- 顔と飾り（螺旋の光が通ると付く）
+    const B2=balls[1],B3=balls[2];
+    const dirF=(yaw,el)=>[Math.sin(yaw)*Math.cos(el),Math.sin(el),Math.cos(yaw)*Math.cos(el)];
+    const coal=(p,r)=>{const P=part(p[0],p[1],p[2],spiralAt(p[1],angOf(p[0],p[2])));
+      ellip(mkE(p,[r,r*0.85,r*0.9],[rnd(),rnd()*3,rnd()],lumpy(5,-0.05,0.15)),1.4,(x,y,z,nx,ny,nz)=>{const t=0.7+0.5*rnd();P(x,y,z,nx,ny,nz,30*t,30*t,36*t,MAT_COAL,1);});};
+    for(const s of [-1,1])coal(surfAt(B3,dirF(s*0.34,0.24)),0.048);
+    for(let k=0;k<6;k++){const yaw=-0.36+k*0.144;const el=-0.17-0.1*Math.cos(yaw/0.36*Math.PI/2);coal(surfAt(B3,dirF(yaw,el)),0.026+rnd()*0.005);}
+    for(const el of [0.42,0.12,-0.2])coal(surfAt(B2,dirF((rnd()-0.5)*0.1,el)),0.038+rnd()*0.008);
+    // にんじんの鼻
+    {
+      const base=surfAt(B3,dirF(0.04,0.03)), d=nrm3(Math.sin(0.28),-0.12,Math.cos(0.28));
+      const P=part(base[0],base[1],base[2],spiralAt(base[1],angOf(base[0],base[2])));
+      tube(t=>[base[0]-d[0]*0.03+d[0]*t*0.3,base[1]-d[1]*0.03+d[1]*t*0.3-0.025*t*t,base[2]-d[2]*0.03+d[2]*t*0.3],
+           t=>0.045*Math.pow(1-t,0.85)+0.004,
+           (x,y,z,nx,ny,nz,t)=>{const tone=(0.8+0.25*rnd())*(0.86+0.14*Math.abs(Math.sin(t*46)));P(x,y,z,nx,ny,nz,235*tone,118*tone,30*tone,MAT_CARROT,0.8+0.2*t);},1.2);
+    }
+    // 木の枝の腕
+    for(const s of [-1,1]){
+      const st=surfAt(B2,nrm3(s,0.25,0.06));
+      const P=part(st[0],st[1],st[2],spiralAt(st[1],angOf(st[0],st[2])));
+      const segs=[];const d0=nrm3(s,0.42+rnd()*0.15,0.1*(rnd()-0.5));
+      const p0=[st[0]-d0[0]*0.05,st[1]-d0[1]*0.05,st[2]-d0[2]*0.05];
+      const p1=[p0[0]+d0[0]*0.3,p0[1]+d0[1]*0.3,p0[2]+d0[2]*0.3];
+      const d1=nrm3(s,0.7,-0.15+rnd()*0.3);const p2=[p1[0]+d1[0]*0.22,p1[1]+d1[1]*0.22,p1[2]+d1[2]*0.22];
+      const d2=nrm3(s,0.25,0.2);const p3=[p2[0]+d2[0]*0.17,p2[1]+d2[1]*0.17,p2[2]+d2[2]*0.17];
+      segs.push([p0,p1,0.028,0.02],[p1,p2,0.02,0.015],[p2,p3,0.015,0.009]);
+      const f1=nrm3(s*0.6,1,0.25),f2=nrm3(s,-0.25,0.35),f3=nrm3(s*0.3,1,-0.2);
+      segs.push([p3,[p3[0]+f1[0]*0.11,p3[1]+f1[1]*0.11,p3[2]+f1[2]*0.11],0.009,0.004]);
+      segs.push([p3,[p3[0]+f2[0]*0.1,p3[1]+f2[1]*0.1,p3[2]+f2[2]*0.1],0.009,0.004]);
+      segs.push([p2,[p2[0]+f3[0]*0.13,p2[1]+f3[1]*0.13,p2[2]+f3[2]*0.13],0.011,0.004]);
+      for(const sg of segs){const a=sg[0],b=sg[1];
+        tube(t=>[lerp(a[0],b[0],t),lerp(a[1],b[1],t),lerp(a[2],b[2],t)],t=>lerp(sg[2],sg[3],t),
+          (x,y,z,nx,ny,nz)=>{const tone=0.75+0.4*rnd();P(x,y,z,nx,ny,nz,120*tone,82*tone,50*tone,MAT_TWIG,1);},1.6);}
+    }
+    // 編み目のマフラー（首に巻く＋垂れ下がり）
+    {
+      const scol=u=>{const k=(u/PI2*9)%1;return k<0.14?[230,228,215]:k<0.3?[32,112,58]:[188,28,38];};
+      torusA([0,1.735,0.03],[0.05,1,0.08],0.255,0.072,(x,y,z,nx,ny,nz,u,v)=>{
+        const dr=0.012*Math.sin(u*14)+0.006*Math.sin(v*3+u*30);
+        const c=scol(u),tone=(0.8+0.2*Math.abs(Math.sin(v*2+u*52)))*(0.92+0.12*rnd());
+        add0(x+nx*dr,y+ny*dr,z+nz*dr,nx,ny,nz,c[0]*tone,c[1]*tone,c[2]*tone,MAT_SCARF,0.65+0.35*Math.max(0,ny*0.5+0.5),spiralAt(y,angOf(x,z)));
+      });
+      const Pt=t=>[0.15+0.08*t,1.71-0.53*t,0.27+0.24*Math.sin(Math.min(1,t*1.5)*Math.PI/2)];
+      const wd=nrm3(1,0,-0.35);
+      const n0=Math.ceil(0.6/(SP*0.7));
+      for(let i=0;i<=n0*1.1;i++){
+        const t=i/n0; const C=Pt(Math.min(1,t)); if(t>1)C[1]-=(t-1)*0.53;
+        const C2=Pt(Math.min(1,t+0.02)), T3=nrm3(C2[0]-C[0],C2[1]-C[1]-(t>=1?0.01:0),C2[2]-C[2]);
+        const nn=nrm3(T3[1]*wd[2]-T3[2]*wd[1],T3[2]*wd[0]-T3[0]*wd[2],T3[0]*wd[1]-T3[1]*wd[0]);
+        const sgn=nn[2]<0?-1:1;
+        for(let w=-0.055;w<=0.0551;w+=SP*0.7){
+          if(t>1&&((w/(SP*0.7))|0)%2)continue;                  // 端のフリンジ
+          const k=(t*5)%1;const c=k<0.16?[230,228,215]:k<0.34?[32,112,58]:[188,28,38];
+          const tone=(0.8+0.2*Math.abs(Math.sin(w*90+t*60)))*(0.92+0.12*rnd());
+          const x=C[0]+wd[0]*w,y=C[1]+wd[1]*w,z=C[2]+wd[2]*w;
+          const at=spiralAt(y,angOf(x,z));
+          add0(x+nn[0]*sgn*0.006,y+nn[1]*sgn*0.006,z+nn[2]*sgn*0.006,nn[0]*sgn,nn[1]*sgn,nn[2]*sgn,c[0]*tone,c[1]*tone,c[2]*tone,MAT_SCARF,0.8,at);
+          add0(x-nn[0]*sgn*0.006,y-nn[1]*sgn*0.006,z-nn[2]*sgn*0.006,-nn[0]*sgn,-nn[1]*sgn,-nn[2]*sgn,c[0]*tone*0.8,c[1]*tone*0.8,c[2]*tone*0.8,MAT_SCARF,0.6,at);
+        }
+      }
+    }
+    // フェアリーライト（雪玉にゆるく巻き付く小さな電飾）
+    {
+      const cnt=[26,18]; NL=cnt[0]+cnt[1];
+      lX=new Float32Array(NL);lY=new Float32Array(NL);lZ=new Float32Array(NL);lTh=new Float32Array(NL);
+      lC=new Uint8Array(NL);lPh=new Float32Array(NL);lSp=new Float32Array(NL);lAt=new Float32Array(NL);lightB=new Float32Array(NL);
+      let li=0;
+      for(let bi=0;bi<2;bi++){
+        const E=balls[bi], n=cnt[bi];
+        for(let k=0;k<n;k++){
+          const s=k/n, th=s*PI2*2.2+bi*1.3, el=lerp(0.55,-0.45,s)+0.06*Math.sin(s*30);
+          const p=surfAt(E,[Math.cos(th)*Math.cos(el),Math.sin(el),Math.sin(th)*Math.cos(el)]);
+          const o=nrm3(p[0]-E.c[0],p[1]-E.c[1],p[2]-E.c[2]);
+          const x=p[0]+o[0]*0.025,y=p[1]+o[1]*0.025,z=p[2]+o[2]*0.025;
+          if(eDist(balls[1-bi],x,y,z)<1.02||y<0.08)continue;
+          lX[li]=x;lY[li]=y;lZ[li]=z;lTh[li]=th;lC[li]=rnd()<0.5?1:[1,6,4,7][Math.floor(rnd()*4)];
+          lPh[li]=rnd()*PI2;lSp[li]=1.4+rnd()*2.6;lAt[li]=spiralAt(y,angOf(x,z));
+          add(x,y,z,o[0],o[1],o[2],0,0,0,MAT_LIGHT,1,lAt[li],0,li); li++;
+        }
+      }
+      NL=li;
+    }
+  }
+
+  /* ===================== サンタクロース（ぽっちゃり・顔なし） ===================== */
+  function buildSanta(){
+    const RED=[186,24,32], PANT=[160,18,26], LEA=[30,27,28], SKIN=[232,182,155], SACK=[152,108,62], BEARD=[243,241,234];
+    const belly=mkE([0,1.0,0.04],[0.6,0.56,0.58],[0,0,0],(fx,fy,fz)=>1+0.07*Math.max(0,fz)-0.02*Math.max(0,-fz)+0.008*Math.sin(fx*9+fy*7));
+    const chest=mkE([0,1.5,0.0],[0.5,0.36,0.41]);
+    const head=mkE([0,1.98,0.04],[0.24,0.24,0.24]);
+    const skirtR=y=>lerp(0.5,0.585,clamp((y-0.55)/0.33,0,1));
+    const inBody=(x,y,z,k)=>eDist(belly,x,y,z)<k||eDist(chest,x,y,z)<k||(y>0.55&&y<0.88&&Math.hypot(x,z-0.02)<skirtR(y)*k);
+    const cloth=(x,y,z,nx,ny,nz,c,ao)=>{const t=(0.86+0.18*rnd())*(0.94+0.06*Math.sin(x*23+y*17)*Math.sin(z*19));
+      add0(x,y,z,nx,ny,nz,c[0]*t,c[1]*t,c[2]*t,MAT_CLOTH,ao,treeAt(y));};
+    // ブーツ
+    for(const s of [-1,1]){
+      ellip(mkE([s*0.2,0.085,0.1],[0.125,0.09,0.2]),1,(x,y,z,nx,ny,nz)=>{if(y<0.008)return;const t=0.8+0.3*rnd();add0(x,y,z,nx,ny,nz,LEA[0]*t,LEA[1]*t,LEA[2]*t,MAT_LEATHER,0.6+0.4*smooth(0,0.15,y),treeAt(y));});
+      tube(t=>[s*0.2,0.05+t*0.34,0],t=>0.122+0.004*t,(x,y,z,nx,ny,nz)=>{const t=0.8+0.3*rnd();add0(x,y,z,nx,ny,nz,LEA[0]*t,LEA[1]*t,LEA[2]*t,MAT_LEATHER,0.8,treeAt(y));});
+      tube(t=>[s*0.195,0.36+t*0.24,0.0],t=>0.15,(x,y,z,nx,ny,nz)=>{if(inBody(x,y,z,0.98))return;cloth(x,y,z,nx,ny,nz,PANT,0.75);});
+    }
+    // コートの裾・お腹・胸
+    tube(t=>[0,0.55+t*0.33,0.02],t=>skirtR(0.55+t*0.33),(x,y,z,nx,ny,nz)=>{if(eDist(belly,x,y,z)<0.98)return;cloth(x,y,z,nx,ny+0.15,nz,RED,0.7+0.3*smooth(0.55,0.8,y));});
+    ellip(belly,1,(x,y,z,nx,ny,nz)=>{
+      if(eDist(chest,x,y,z)<0.97)return; if(y<0.55&&Math.hypot(x,z-0.02)<skirtR(0.55))return;
+      if(Math.abs(y-0.98)<0.068){const t=0.8+0.3*rnd();add0(x,y,z,nx,ny,nz,LEA[0]*t,LEA[1]*t,LEA[2]*t,MAT_LEATHER,0.9,treeAt(y));return;}   // ベルト
+      cloth(x,y,z,nx,ny,nz,RED,0.62+0.38*smooth(0.45,1.1,y));
+    });
+    ellip(chest,1,(x,y,z,nx,ny,nz)=>{if(eDist(belly,x,y,z)<0.97)return;cloth(x,y,z,nx,ny,nz,RED,0.75+0.25*Math.max(0,ny));});
+    // 腕（袖・ひじ）と手袋
+    const wrists=[];
+    for(const s of [-1,1]){
+      const sh=[s*0.46,1.6,0],el=[s*0.7,1.2,0.08],wr=[s*0.55,0.98,0.42];
+      tube(t=>[lerp(sh[0],el[0],t),lerp(sh[1],el[1],t),lerp(sh[2],el[2],t)],t=>lerp(0.15,0.135,t),(x,y,z,nx,ny,nz)=>{if(inBody(x,y,z,0.97))return;cloth(x,y,z,nx,ny,nz,RED,0.82);});
+      ellip(mkE(el,[0.135,0.135,0.135]),1,(x,y,z,nx,ny,nz)=>{if(inBody(x,y,z,0.97))return;cloth(x,y,z,nx,ny,nz,RED,0.8);});
+      tube(t=>[lerp(el[0],wr[0],t),lerp(el[1],wr[1],t),lerp(el[2],wr[2],t)],t=>lerp(0.135,0.115,t),(x,y,z,nx,ny,nz)=>cloth(x,y,z,nx,ny,nz,RED,0.82));
+      const fd=nrm3(wr[0]-el[0],wr[1]-el[1],wr[2]-el[2]);
+      const gc=[wr[0]+fd[0]*0.09,wr[1]+fd[1]*0.09,wr[2]+fd[2]*0.09];
+      ellip(mkE(gc,[0.095,0.085,0.105],[0,0,0],lumpy(4,-0.02,0.06)),1,(x,y,z,nx,ny,nz)=>{const t=0.8+0.3*rnd();add0(x,y,z,nx,ny,nz,LEA[0]*t,LEA[1]*t,LEA[2]*t,MAT_LEATHER,0.85,treeAt(y));});
+      wrists.push([wr,fd]);
+    }
+    // 頭（肌）・大きな鼻・もみあげ・ヒゲ・口ひげ（目や顔のパーツは作らない）
+    ellip(head,1,(x,y,z,nx,ny,nz)=>{const near=Math.exp(-((x)**2+(y-1.97)**2+(z-0.36)**2)/0.02);const t=0.9+0.12*rnd();
+      add0(x,y,z,nx,ny,nz,(SKIN[0]+10*near)*t,(SKIN[1]-40*near)*t,(SKIN[2]-30*near)*t,MAT_SKIN,0.85,treeAt(y));});
+    ellip(mkE([0,1.975,0.345],[0.07,0.06,0.064],[0,0,0],lumpy(3,-0.02,0.05)),1.6,(x,y,z,nx,ny,nz)=>{const t=0.92+0.1*rnd();add0(x,y,z,nx,ny,nz,228*t,128*t,116*t,MAT_SKIN,1,treeAt(y));});
+    const beardOK=(x,y,z)=>!(eDist(head,x,y,z)<0.96||eDist(chest,x,y,z)<0.96);
+    ellip(mkE([0,1.66,0.27],[0.31,0.33,0.2],[0,0,0],lumpy(14,-0.02,0.07)),1.15,(x,y,z,nx,ny,nz)=>{if(!beardOK(x,y,z))return;fur(add0,x,y,z,nx,ny,nz,0.7+0.3*smooth(1.35,1.9,y),treeAt(y),BEARD);},
+      (fx,fy)=>fy<0?1+0.48*fy:1);
+    for(const s of [-1,1]){
+      ellip(mkE([s*0.2,1.95,0.13],[0.075,0.17,0.11],[0,0,s*-0.1],lumpy(5,-0.02,0.06)),1.1,(x,y,z,nx,ny,nz)=>{if(eDist(head,x,y,z)<0.96)return;fur(add0,x,y,z,nx,ny,nz,0.85,treeAt(y),BEARD);});
+      ellip(mkE([s*0.105,1.905,0.37],[0.115,0.042,0.055],[0,s*0.25,s*-0.45],lumpy(4,-0.02,0.06)),1.4,(x,y,z,nx,ny,nz)=>fur(add0,x,y,z,nx,ny,nz,0.95,treeAt(y),[246,242,228]));
+    }
+    // 帽子（曲がった三角帽）
+    const bz=(t)=>{const u=1-t;const P0=[0,2.17,-0.01],P1=[0.02,2.52,-0.05],P2=[0.26,2.63,-0.1],P3=[0.45,2.44,-0.13];
+      return [0,1,2].map(i=>u*u*u*P0[i]+3*u*u*t*P1[i]+3*u*t*t*P2[i]+t*t*t*P3[i]);};
+    tube(bz,t=>0.235*Math.pow(1-t,0.85)+0.025,(x,y,z,nx,ny,nz,t)=>{if(eDist(head,x,y,z)<0.97)return;cloth(x,y,z,nx,ny,nz,RED,0.7+0.3*Math.max(0,ny));});
+    // サンタの袋（背中）
+    const sack=mkE([-0.12,1.32,-0.74],[0.42,0.5,0.3],[0.15,0.3,0.3],lumpy(7,0.0,0.08));
+    ellip(sack,1,(x,y,z,nx,ny,nz,fx,fy,fz)=>{if(inBody(x,y,z,0.98))return;
+      const w=(Math.floor((fy+1)*36)+Math.floor((Math.atan2(fz,fx)+Math.PI)*16))%2;const t=(0.82+0.12*w)*(0.9+0.15*rnd());
+      add0(x,y,z,nx,ny,nz,SACK[0]*t,SACK[1]*t,SACK[2]*t,MAT_SACK,0.55+0.45*Math.max(0,ny*0.5+0.5),treeAt(y));});
+    const sTop=surfAt(sack,nrm3(0.1,1,0.1));
+    tube(t=>[lerp(sTop[0],0.34,t),lerp(sTop[1]-0.04,1.82,t)+0.05*Math.sin(t*Math.PI),lerp(sTop[2],-0.16,t)],t=>0.065-0.012*t,
+      (x,y,z,nx,ny,nz)=>{if(inBody(x,y,z,0.97))return;const t=0.75+0.2*rnd();add0(x,y,z,nx,ny,nz,SACK[0]*t,SACK[1]*t,SACK[2]*t,MAT_SACK,0.85,treeAt(y));});
+    // ---- てっぺん：ポンポン（星の代わりにポン）
+    const pe=bz(1); const pp=[pe[0]+0.02,pe[1]-0.05,pe[2]];
+    starG=addG(pp[0],pp[1],pp[2],TL.STAR); TOP_POS=pp;
+    ellip(mkE([0,0,0],[0.08,0.08,0.08],[0,0,0],lumpy(8,-0.03,0.1)),1.4,(x,y,z,nx,ny,nz)=>fur((a,b,c,d,e,f,r,g,bb,m,ao)=>add(a,b,c,d,e,f,r,g,bb,m,ao,0,starG,0),x,y,z,nx,ny,nz,0.95,0));
+    // ---- 螺旋の光が通ると付く：ファーの縁取り・バックル
+    const furS=(x,y,z,nx,ny,nz,ao)=>fur(add0,x,y,z,nx,ny,nz,ao,spiralAt(y,angOf(x,z)));
+    torusA([0,2.165,0.01],[0,1,-0.12],0.238,0.07,(x,y,z,nx,ny,nz)=>furS(x,y,z,nx,ny,nz,0.75+0.25*Math.max(0,ny)));      // 帽子のつば
+    torusA([0,0.56,0.02],[0,1,0],0.5,0.065,(x,y,z,nx,ny,nz)=>furS(x,y,z,nx,ny,nz,0.6+0.4*Math.max(0,ny)));              // 裾
+    for(const w of wrists){torusA(w[0],w[1],0.118,0.05,(x,y,z,nx,ny,nz)=>furS(x,y,z,nx,ny,nz,0.85));}                   // 袖口
+    for(let yy=0.5;yy<=1.62;yy+=SP*0.7){                                                                               // 前立てのファー
+      if(Math.abs(yy-0.98)<0.075)continue;
+      for(let x=-0.07;x<=0.0701;x+=SP*0.7){
+        let best=-1,nn=null;
+        const tryE=(E,bulge)=>{const e=1-(x/E.r[0])**2-((yy-E.c[1])/E.r[1])**2;if(e<=0)return;const z=E.c[2]+E.r[2]*Math.sqrt(e)*bulge;
+          if(z>best){best=z;nn=nrm3(x/E.r[0]**2,(yy-E.c[1])/E.r[1]**2,(z-E.c[2])/(E.r[2]*bulge)**2);}};
+        tryE(belly,1.07);tryE(chest,1);
+        if(yy>0.55&&yy<0.88){const z=0.02+Math.sqrt(Math.max(0,skirtR(yy)**2-x*x));if(z>best){best=z;nn=nrm3(x,0.15,z-0.02);}}
+        if(best<0)continue;
+        furS(x+nn[0]*0.022,yy+nn[1]*0.022,best+nn[2]*0.022,nn[0],nn[1],nn[2],0.85);
+      }
+    }
+    {
+      const zf=belly.c[2]+belly.r[2]*1.07*Math.sqrt(1-((0.98-belly.c[1])/belly.r[1])**2)+0.018;
+      const P=part(0,0.98,zf,spiralAt(0.98,Math.PI/2));
+      for(let x=-0.1;x<=0.1001;x+=SP*0.5)for(let y=-0.075;y<=0.0751;y+=SP*0.5){
+        const frame=Math.abs(x)>0.058||Math.abs(y)>0.034, bar=Math.abs(y)<0.011&&x<0.02;
+        const edge=Math.max(Math.abs(x)/0.1,Math.abs(y)/0.075);
+        const nx=edge>0.85?x*4:0, ny=edge>0.85?y*4:0;
+        if(frame||bar){const t=0.9+0.15*rnd();P(x,0.98+y,zf+0.012,nx,ny,1,245*t,192*t,64*t,MAT_GOLD,1);}
+        else{const t=0.8+0.2*rnd();P(x,0.98+y,zf-0.004,0,0,1,LEA[0]*t,LEA[1]*t,LEA[2]*t,MAT_LEATHER,0.7);}
+      }
+    }
+    // ---- 金色のトナカイ（テンプレート：前が+x、上が+y）
+    {
+      const T0={x:[],y:[],z:[],nx:[],ny:[],nz:[],t:[],leg:[],sd:[]};
+      const tp=leg=>(x,y,z,nx,ny,nz)=>{const l=Math.hypot(nx,ny,nz)||1;T0.x.push(x);T0.y.push(y);T0.z.push(z);
+        T0.nx.push(nx/l);T0.ny.push(ny/l);T0.nz.push(nz/l);T0.t.push(0.85+0.25*rnd());T0.leg.push(leg);T0.sd.push(rnd());};
+      const body=tp(-1);
+      ellip(mkE([0,0.36,0],[0.2,0.1,0.085]),1.3,body);                     // 胴
+      ellip(mkE([0.11,0.37,0],[0.1,0.105,0.08]),1.3,body);                  // 胸
+      tube(t=>[lerp(0.14,0.25,t),lerp(0.39,0.56,t),0],t=>lerp(0.055,0.04,t),body,1.3);   // 首
+      ellip(mkE([0.28,0.585,0],[0.065,0.05,0.045],[0,0,-0.35]),1.4,body);   // 頭
+      ellip(mkE([0.335,0.555,0],[0.05,0.03,0.03],[0,0,-0.35]),1.4,body);    // 鼻先
+      ellip(mkE([-0.21,0.42,0],[0.03,0.022,0.02]),1.4,body);                // しっぽ
+      for(const s of [-1,1]){
+        ellip(mkE([0.255,0.625,s*0.045],[0.028,0.012,0.022],[0,0,0.6]),1.5,body);   // 耳
+        const A=[[0.255,0.62,s*0.03],[0.235,0.74,s*0.07],[0.2,0.82,s*0.1],[0.15,0.87,s*0.11]];
+        for(let q=0;q<3;q++){const a=A[q],b=A[q+1];tube(t=>[lerp(a[0],b[0],t),lerp(a[1],b[1],t),lerp(a[2],b[2],t)],t=>lerp(0.013,0.008,(q+t)/3),body,1.6);}
+        const tines=[[[0.238,0.72,s*0.065],[0.29,0.79,s*0.07]],[[0.21,0.8,s*0.095],[0.25,0.88,s*0.1]],[[0.17,0.85,s*0.105],[0.16,0.93,s*0.12]]];
+        for(const ab of tines){const a=ab[0],b=ab[1];tube(t=>[lerp(a[0],b[0],t),lerp(a[1],b[1],t),lerp(a[2],b[2],t)],t=>lerp(0.009,0.005,t),body,1.6);}   // 角
+      }
+      const piv=[[0.12,0.33,0.045],[0.12,0.33,-0.045],[-0.13,0.34,0.045],[-0.13,0.34,-0.045]];
+      // 脚：股関節→ひざ（上の脚）、ひざ→ひづめ（下の脚）の2節。前脚のひざは後ろへ、後ろ脚のかかとは前へ曲がる
+      const knee=[];
+      for(let lg=0;lg<4;lg++){
+        const p=piv[lg], front=lg<2;
+        const kn=[p[0]+(front?0.005:-0.03),0.18,p[2]]; knee.push(kn);
+        const hoof=[kn[0]+(front?-0.005:0.025),0.03,p[2]];
+        const up=tp(lg), lo=tp(lg+4);
+        tube(t=>[lerp(p[0],kn[0],t),lerp(p[1],kn[1],t),p[2]],t=>lerp(front?0.028:0.032,0.017,t),up,1.5);        // 上の脚（太もも）
+        ellip(mkE(kn,[0.019,0.02,0.018]),1.6,lo);                                                               // ひざの関節
+        tube(t=>[lerp(kn[0],hoof[0],t),lerp(kn[1],hoof[1],t),p[2]],t=>lerp(0.016,0.011,t),lo,1.6);             // 下の脚（すね）
+        ellip(mkE([hoof[0]+0.006,0.022,p[2]],[0.02,0.02,0.016]),1.6,lo);                                       // ひづめ
+      }
+      RKNEE=knee;
+      RDN=T0.x.length;
+      RD={x:Float32Array.from(T0.x),y:Float32Array.from(T0.y),z:Float32Array.from(T0.z),nx:Float32Array.from(T0.nx),
+          ny:Float32Array.from(T0.ny),nz:Float32Array.from(T0.nz),t:Float32Array.from(T0.t),leg:Int8Array.from(T0.leg),sd:Float32Array.from(T0.sd)};
+      RPIV=piv;
+    }
+  }
+
+  function buildTree(){
+  /* ---------- 幹（樹皮の溝・根張り） ---------- */
+  const trunkR=(y,th)=>0.085+0.06*Math.exp(-y*11)*(0.55+0.45*Math.cos(5*th+0.4))
+                      +0.009*Math.sin(th*13+Math.sin(y*8)*1.6)+0.003*Math.sin(y*40+th*3);
+  const trunkP=(y,th)=>{const r=trunkR(y,th);return [r*Math.cos(th),y,r*Math.sin(th)];};
+  for(let y=0;y<=0.55;y+=SP*0.85){
+    const rAvg=0.1+0.06*Math.exp(-y*11);
+    const nT=Math.max(12,Math.ceil(PI2*rAvg/(SP*0.8)));
+    for(let j=0;j<nT;j++){
+      const th=(j+rnd()*0.3)/nT*PI2;
+      const yy=Math.max(0,y+(rnd()-0.5)*SP*0.3);
+      const p=trunkP(yy,th);
+      const e=1e-3, pa=trunkP(yy+e,th), pb=trunkP(yy,th+e);
+      const ux=pa[0]-p[0],uy=pa[1]-p[1],uz=pa[2]-p[2],vx=pb[0]-p[0],vy=pb[1]-p[1],vz=pb[2]-p[2];
+      let nx=uy*vz-uz*vy,ny=uz*vx-ux*vz,nz=ux*vy-uy*vx;
+      if(nx*p[0]+nz*p[2]<0){nx=-nx;ny=-ny;nz=-nz;}
+      const groove=Math.sin(th*13+Math.sin(yy*8)*1.6);
+      const tone=(0.70+0.34*(groove*0.5+0.5))*(0.86+0.26*rnd());
+      const ao=(1-0.62*smooth(0.1,0.4,yy))*(0.62+0.38*smooth(0,0.07,yy));
+      add(p[0],p[1],p[2],nx,ny,nz,98*tone,60*tone,34*tone,MAT_BARK,ao,treeAt(yy),0,0);
+    }
+  }
+
+  /* ---------- 内側の暗い芯（奥まった影） ---------- */
+  for(let y=FOL_Y0+0.02;y<=TOP_Y-0.05;y+=SP*1.15){
+    const R=coneR(y)*0.55;
+    const nT=Math.max(6,Math.ceil(PI2*R/(SP*1.15)));
+    for(let j=0;j<nT;j++){
+      const th=(j+rnd()*0.5)/nT*PI2;
+      const tone=0.75+0.35*rnd();
+      add(R*Math.cos(th),y,R*Math.sin(th),Math.cos(th),0.4,Math.sin(th),9*tone,36*tone,20*tone,MAT_CORE,0.32,treeAt(y),0,0);
+    }
+  }
+
+  /* ---------- 枝の房（段・垂れ下がり・針葉の広がり・枝先の雪） ---------- */
+  BRANCH_N=0;
+  let y=FOL_Y0, whorl=0;
+  while(y<TOP_Y-0.015){
+    const R=coneR(y);
+    const nb=Math.max(4,Math.round(R*26));
+    const wph=((y-FOL_Y0)/0.24)%1;                 // 枝段のリズム
+    const ledge=0.9+0.2*(1-wph);
+    for(let b=0;b<nb;b++){
+      BRANCH_N++;
+      const th=(b+rnd()*0.7)/nb*PI2+whorl*0.618;
+      const Lb=R*ledge*(1+0.13*fluff(th,y))*(0.78+0.32*rnd())+0.03;
+      const dx=Math.cos(th),dz=Math.sin(th),sx=-dz,sz=dx;
+      const bTone=0.88+0.24*rnd(), hue=(rnd()-0.5)*0.12;
+      const width=Math.min(1,Lb/0.45);
+      const n=Math.ceil((Lb*0.65)*(0.05+0.11*Lb)/(SP*SP)*0.95)+5;
+      for(let k=0;k<n;k++){
+        const s=0.32+0.68*Math.sqrt(rnd());
+        const d=s*Lb;
+        const g1=gauss(),g2=gauss();
+        const spread=(0.016+0.07*s*width)*g1;
+        const up=(0.008+0.03*s)*g2;
+        const px=dx*d+sx*spread, pz=dz*d+sz*spread;
+        const py=y+0.05*d-0.21*d*d+up;
+        let nx=dx*0.75+sx*g1*0.35+(rnd()-0.5)*0.35;
+        let ny=0.55+g2*0.25+(rnd()-0.5)*0.3;
+        let nz=dz*0.75+sz*g1*0.35+(rnd()-0.5)*0.35;
+        const ao=(0.30+0.70*Math.pow(s,1.3))*(1-0.25*Math.min(1,Math.abs(g1)*0.4));
+        const at=treeAt(y)+0.3*s;
+        const tone=bTone*(0.8+0.3*rnd());
+        if(s<0.52&&rnd()<0.45){                     // 枝の根元（茶色）
+          add(px,py,pz,nx,ny,nz,70*tone,44*tone,24*tone,MAT_BRANCH,ao*0.8,at,0,0);
+          continue;
+        }
+        if(s>0.8&&g2>0.3&&rnd()<0.09){               // 枝先の雪化粧
+          const st=0.9+0.12*rnd();
+          add(px,py+0.01,pz,nx*0.4,1,nz*0.4,215*st,228*st,255*st,MAT_SNOW,0.75+0.25*s,at,0,0);
+          continue;
+        }
+        const kk=clamp(s*0.85+(rnd()-0.5)*0.25,0,1);
+        let r=lerp(16,56,kk)*(1+hue), g=lerp(70,142,kk), bb=lerp(32,64,kk)*(1-hue);
+        if(s>0.9&&rnd()<0.14){r+=26;g+=30;bb+=8;}  // 新芽の明るい先端
+        add(px,py,pz,nx,ny,nz,r*tone,g*tone,bb*tone,MAT_LEAF,ao,at,0,0);
+      }
+    }
+    y+=0.048+rnd()*0.022; whorl++;
+  }
+
+  /* ---------- オーナメント（玉飾り） ---------- */
+  const OCOL=[[205,22,38],[235,178,45],[205,22,38],[40,90,225],[195,205,220],[205,22,38],[140,45,200],[235,178,45]];
+  const orns=[]; let tries=0;
+  while(orns.length<40&&tries<6000){
+    tries++;
+    const oy=pickY(0.42,2.85), th=rnd()*PI2;
+    const ro=(0.05+rnd()*0.028)*(0.7+0.3*coneR(oy)/R0);
+    const rr=decoR(oy,th)*0.97+ro*0.35;
+    const x=rr*Math.cos(th), z=rr*Math.sin(th);
+    if(orns.some(o=>Math.hypot(o.x-x,o.y-oy,o.z-z)<0.17))continue;
+    orns.push({x,y:oy,z,ro,th,col:OCOL[orns.length%OCOL.length],style:Math.floor(rnd()*3)});
+  }
+  decoAts=[];
+  for(const o of orns){
+    const at=spiralAt(o.y,o.th); decoAts.push(at);
+    const gid=addG(o.x,o.y,o.z,at);
+    const n=Math.ceil(4*Math.PI*o.ro*o.ro/((SP*0.6)*(SP*0.6)))+24;
+    const ct=Math.cos(o.th), st=Math.sin(o.th);
+    for(let k=0;k<n;k++){
+      const fy=1-2*(k+0.5)/n, fr=Math.sqrt(1-fy*fy), ph=k*2.399963;
+      const fx=Math.cos(ph)*fr, fz=Math.sin(ph)*fr;
+      const out=fx*ct+fz*st;
+      const ao=0.42+0.58*clamp(out*0.55+0.55,0,1);
+      let c=o.col, mat=MAT_ORN;
+      if(o.style===1&&Math.abs(fy)<0.17){c=[240,215,120];mat=MAT_ORNB;}
+      else if(o.style===2&&Math.sin(Math.atan2(fz,fx)*4+fy*3)>0.55){c=[c[0]*0.5+128,c[1]*0.5+128,c[2]*0.5+128];}
+      const tone=0.92+0.16*rnd();
+      add(fx*o.ro,fy*o.ro,fz*o.ro,fx,fy,fz,c[0]*tone,c[1]*tone,c[2]*tone,mat,ao,0,gid,0);
+    }
+    add(0,o.ro+0.012,0,0,1,0,205,185,120,MAT_CAP,0.9,0,gid,0);
+  }
+
+  /* ---------- 電飾ライト ---------- */
+  NL=190;
+  lX=new Float32Array(NL);lY=new Float32Array(NL);lZ=new Float32Array(NL);lTh=new Float32Array(NL);
+  lC=new Uint8Array(NL);lPh=new Float32Array(NL);lSp=new Float32Array(NL);lAt=new Float32Array(NL);lightB=new Float32Array(NL);
+  for(let li=0;li<NL;li++){
+    const ly=pickY(0.35,3.0), th=rnd()*PI2;
+    const rr=decoR(ly,th)*(0.9+0.13*rnd());
+    const x=rr*Math.cos(th), z=rr*Math.sin(th);
+    lX[li]=x;lY[li]=ly;lZ[li]=z;lTh[li]=th;
+    lC[li]=rnd()<0.45?1:1+Math.floor(rnd()*6);        // 暖色多め
+    lPh[li]=rnd()*PI2;lSp[li]=1.5+rnd()*3.2;lAt[li]=spiralAt(ly,th);
+    add(x,ly,z,Math.cos(th),0.3,Math.sin(th),0,0,0,MAT_LIGHT,1,lAt[li],0,li);
+  }
+
+  /* ---------- 金のモール（螺旋の光の軌跡そのもの） ---------- */
+  {
+    const len=SP_TURNS*PI2*0.55; const ns=Math.ceil(len/(SP*0.7));
+    for(let q=0;q<=ns;q++){
+      const s=q/ns;
+      const y0=SP_TOP-s*(SP_TOP-SP_BOT), th=SP_TH0+s*SP_TURNS*PI2;
+      const pp=(s*SP_TURNS*6)%1, sw=Math.sin(Math.PI*pp);
+      const yy=y0-0.06*sw, r=rG(y0)+0.025*sw;
+      const rx=Math.cos(th), rz=Math.sin(th);
+      const cx=r*rx, cz=r*rz;
+      const at=TL.SP_START+s*TL.SP_DUR+0.03;
+      const gold=()=>{const t=0.65+0.55*rnd();return [215*t,170*t,62*t];};
+      let c=gold(); add(cx,yy,cz,rx,0.2,rz,c[0],c[1],c[2],MAT_TIN,1,at,0,0);
+      for(let f=0;f<1;f++){
+        const ex=rnd()-0.5,ey=rnd()-0.5,ez=rnd()-0.5;const dl=Math.hypot(ex,ey,ez)||1;
+        c=gold(); add(cx+ex/dl*0.03,yy+ey/dl*0.03,cz+ez/dl*0.03,ex/dl+rx,ey/dl,ez/dl+rz,c[0],c[1],c[2],MAT_TIN,0.9,at,0,0);
+      }
+    }
+  }
+
+  /* ---------- 赤いリボン（ひだ付きの帯・金の縁取り） ---------- */
+  {
+    const RT=3.5, RTOP=2.8, RBOT=0.45, RTH0=Math.PI;
+    const ns=Math.ceil(RT*PI2*0.5/(SP*0.6));
+    for(let q=0;q<=ns;q++){
+      const s=q/ns;
+      const y0=RTOP-s*(RTOP-RBOT), th=RTH0+s*RT*PI2;
+      const r=rG(y0)+0.008;
+      const cf=Math.sin(s*RT*PI2*6), a=0.55*cf;
+      const rx=Math.cos(th), rz=Math.sin(th);
+      const nX=rx*Math.cos(a), nY=Math.sin(a), nZ=rz*Math.cos(a);
+      const acX=-rx*Math.sin(a), acY=Math.cos(a), acZ=-rz*Math.sin(a);
+      const cx=(r+0.01*cf)*rx, cz=(r+0.01*cf)*rz;
+      for(let w=-0.03;w<=0.0301;w+=SP*0.55){
+        const px=cx+acX*w, py=y0+acY*w, pz=cz+acZ*w;
+        const tone=0.88+0.18*rnd();
+        const trim=Math.abs(w)>0.023;
+        const col=trim?[225,175,60]:[205,20,40];
+        add(px,py,pz,nX,nY,nZ,col[0]*tone,col[1]*tone,col[2]*tone,MAT_RIB,1,spiralAt(py,th),0,0);
+      }
+    }
+  }
+
+  /* ---------- てっぺんの星（立体の五芒星） ---------- */
+  starG=addG(0,STAR_Y,0,TL.STAR);
+  {
+    const RO=0.17,RI=0.072,TH=0.06,ss=SP*0.5;
+    const sh=(x,yy)=>{const rho=Math.hypot(x,yy);let a=Math.atan2(x,yy)/(PI2/5);a-=Math.floor(a);
+      const t=Math.min(a,1-a)*2;const Rs=lerp(RO,RI,t);return rho<Rs?TH*(1-rho/Rs):-1;};
+    const e=0.004;
+    for(let x=-RO;x<=RO;x+=ss){
+      for(let yy=-RO;yy<=RO;yy+=ss){
+        const h=sh(x,yy); if(h<0)continue;
+        const a1=Math.max(0,sh(x+e,yy)),a2=Math.max(0,sh(x-e,yy)),b1=Math.max(0,sh(x,yy+e)),b2=Math.max(0,sh(x,yy-e));
+        const hx=(a1-a2)/(2*e), hy=(b1-b2)/(2*e);
+        const tone=0.9+0.16*rnd();
+        add(x,yy,h,-hx,-hy,1,255*tone,200*tone,60*tone,MAT_STAR,1,0,starG,0);
+        add(x,yy,-h,hx,hy,-1,255*tone,200*tone,60*tone,MAT_STAR,1,0,starG,0);
+      }
+    }
+  }
+
+  }
+
+  if(model==='tree')buildTree(); else if(model==='snowman')buildSnowman(); else buildSanta();
+  ORN_N=decoAts.length;
+
+  /* ---------- 外周プロファイル（光の広がり・螺旋の半径に使う） ---------- */
+  {
+    const nb=Math.ceil((TOP_Y+0.6)/PB)+2, raw=new Float32Array(nb);
+    for(let i=0;i<B.lx.length;i++){
+      const m2=B.mat[i]; if(B.grp[i]!==0||m2===MAT_TIN||m2===MAT_RIB||m2===MAT_LIGHT)continue;
+      const bi=Math.floor(clamp(B.ly[i],0,TOP_Y+0.5)/PB); const r=Math.hypot(B.lx[i],B.lz[i]); if(r>raw[bi])raw[bi]=r;
+    }
+    const w=Math.round(0.35/PB); PROF=new Float32Array(nb);
+    for(let i=0;i<nb;i++){let mx=0;for(let j=i;j<=Math.min(nb-1,i+w);j++)mx=Math.max(mx,raw[j]);PROF[i]=mx;}
+    for(let pass=0;pass<3;pass++){const c=PROF.slice();for(let i=1;i<nb-1;i++)PROF[i]=(c[i-1]+c[i]*2+c[i+1])/4;}
+  }
+
+  /* ---------- プレゼント箱（配置のみ先に決定） ---------- */
+  const GCOL=[[[200,28,40],[245,205,90]],[[32,82,205],[235,235,245]],[[28,150,80],[225,40,55]],[[150,48,190],[250,212,95]],
+              [[238,182,40],[192,28,40]],[[240,110,172],[255,255,255]],[[22,160,172],[245,125,60]],[[235,235,240],[210,30,45]]];
+  const ORDER=[0,4,2,6,1,5,3,7];
+  gifts=[]; giftAts=[];
+  for(let k=0;k<(model==='santa'?0:8);k++){
+    const th=k/8*PI2+0.4+(rnd()-0.5)*0.35; let rad=0.92+rnd()*0.3; if(model==='santa'&&Math.sin(th)<-0.25)rad+=0.45; if(model==='snowman')rad+=0.05;
+    const w=0.2+rnd()*0.13, d=0.2+rnd()*0.13, h=0.13+rnd()*0.15, yaw=rnd()*Math.PI;
+    const x=Math.cos(th)*rad, z=Math.sin(th)*rad;
+    const at=TL.GIFT_START+ORDER[k]*TL.GIFT_GAP;
+    const gid=addG(x,0,z,at);
+    gifts.push({x,z,w,d,h,yaw,gid,at,col:GCOL[k][0],rc:GCOL[k][1],pat:k%3});
+    giftAts.push(at);
+  }
+  GIFT_N=gifts.length;
+
+  /* ---------- 雪の地面（波紋で現れる） ---------- */
+  const GR_R=1.7, gsp=SP*1.2;
+  for(let x=-GR_R;x<=GR_R;x+=gsp){
+    for(let z=-GR_R;z<=GR_R;z+=gsp){
+      const jx=x+(rnd()-0.5)*gsp*0.6, jz=z+(rnd()-0.5)*gsp*0.6;
+      const d=Math.hypot(jx,jz);
+      const edge=GR_R*(0.88+0.07*Math.sin(Math.atan2(jz,jx)*5+1)+0.05*Math.sin(Math.atan2(jz,jx)*11));
+      if(d>edge||d<0.08)continue;
+      const bump=0.010*Math.sin(jx*9)*Math.cos(jz*8);
+      const nx=-0.09*Math.cos(jx*9)*Math.cos(jz*8)+(rnd()-0.5)*0.2;
+      const nz=0.08*Math.sin(jx*9)*Math.sin(jz*8)+(rnd()-0.5)*0.2;
+      const tone=0.8+0.26*rnd();
+      const ao=(0.30+0.70*smooth(0.1,1.0,d))*(1-0.8*smooth(edge*0.65,edge,d));
+      let sh=0;
+      for(const G of gifts){
+        const dx=jx-G.x,dz=jz-G.z;const c=Math.cos(-G.yaw),s=Math.sin(-G.yaw);
+        const lx=dx*c-dz*s, lz=dx*s+dz*c;
+        if(Math.abs(lx)<G.w/2+0.05&&Math.abs(lz)<G.d/2+0.05){sh=G.gid;break;}
+      }
+      add(jx,bump,jz,nx,1,nz,130*tone,146*tone,182*tone,MAT_GND,ao,TL.RIPPLE+d/TL.RIPPLE_SPEED,0,sh);
+    }
+  }
+
+  /* ---------- プレゼント箱の点群 ---------- */
+  for(const G of gifts){
+    const cyw=Math.cos(G.yaw), syw=Math.sin(G.yaw), rw=0.022, hw=G.w/2, hd=G.d/2, h=G.h, st=SP*0.7;
+    const put=(bx,by,bz,nx,ny,nz,face)=>{
+      let rib=false, ex=0;
+      if(face===0){const ox=Math.abs(bz)<rw, oz=Math.abs(bx)<rw;rib=ox||oz;ex=(ox&&oz)?3:2;}
+      else if(face===1){rib=Math.abs(bz)<rw;ex=1;}
+      else {rib=Math.abs(bx)<rw;ex=1;}
+      const e=st*0.9;
+      let nc=0;
+      if(Math.abs(Math.abs(bx)-hw)<e)nc++;
+      if(Math.abs(by-h)<e||by<e)nc++;
+      if(Math.abs(Math.abs(bz)-hd)<e)nc++;
+      const edge=nc>=2;
+      const tone=0.9+0.18*rnd();
+      let c=G.col, mat=MAT_GIFT;
+      if(rib){c=G.rc;mat=MAT_GRIB;}
+      else{
+        ex=0; if(edge)ex|=4;
+        let pat=false;
+        if(G.pat===1){const q=(bx+by+bz)*15;pat=(q-Math.floor(q))<0.38;if(pat)ex|=8;}
+        else if(G.pat===2){
+          let a,bq; if(face===0){a=bx;bq=bz;}else if(face===1){a=bz;bq=by;}else{a=bx;bq=by;}
+          const qa=a*13-Math.floor(a*13)-0.5, qb=bq*13-Math.floor(bq*13)-0.5;
+          pat=qa*qa+qb*qb<0.06; if(pat)ex|=8|16;
+        }
+        if(pat)c=[lerp(c[0],G.rc[0],0.6),lerp(c[1],G.rc[1],0.6),lerp(c[2],G.rc[2],0.6)];
+      }
+      const ao=face===0?1.0:(0.48+0.52*smooth(0,h*0.75,by));
+      const x=bx*cyw-bz*syw, z=bx*syw+bz*cyw, nnx=nx*cyw-nz*syw, nnz=nx*syw+nz*cyw;
+      const kk=(edge&&!rib)?1.18:1;
+      add(x,by,z,nnx,ny,nnz,c[0]*tone*kk,c[1]*tone*kk,c[2]*tone*kk,mat,ao,0,G.gid,ex);
+    };
+    for(let bx=-hw;bx<=hw+1e-6;bx+=st)for(let bz=-hd;bz<=hd+1e-6;bz+=st)put(bx,h,bz,0,1,0,0);
+    for(let by=0;by<=h+1e-6;by+=st)for(let bz=-hd;bz<=hd+1e-6;bz+=st){put(hw,by,bz,1,0,0,1);put(-hw,by,bz,-1,0,0,1);}
+    for(let by=0;by<=h+1e-6;by+=st)for(let bx=-hw;bx<=hw+1e-6;bx+=st){put(bx,by,hd,0,0,1,2);put(bx,by,-hd,0,0,-1,2);}
+    // リボンの蝶結び
+    const bow=(ox,oy,oz,a,b,c,tilt)=>{
+      const n=Math.ceil(4*Math.PI*Math.pow((a+b+c)/3,2)/(st*st*0.6))+20;
+      const ctl=Math.cos(tilt), stl=Math.sin(tilt);
+      for(let k=0;k<n;k++){
+        const fy=1-2*(k+0.5)/n, fr=Math.sqrt(1-fy*fy), ph=k*2.399963;
+        const fx=Math.cos(ph)*fr, fz=Math.sin(ph)*fr;
+        let px=fx*a, py=fy*b, pz=fz*c, nx=fx/a, ny=fy/b, nz=fz/c;
+        let qx=px*ctl-py*stl, qy=px*stl+py*ctl; px=qx; py=qy;
+        qx=nx*ctl-ny*stl; qy=nx*stl+ny*ctl; nx=qx; ny=qy;
+        px+=ox; py+=oy; pz+=oz;
+        const x=px*cyw-pz*syw, z=px*syw+pz*cyw, nnx=nx*cyw-nz*syw, nnz=nx*syw+nz*cyw;
+        const tone=0.9+0.16*rnd();
+        add(x,py,z,nnx,ny,nnz,G.rc[0]*tone,G.rc[1]*tone,G.rc[2]*tone,MAT_BOW,0.7+0.3*(fy*0.5+0.5),0,G.gid,0);
+      }
+    };
+    bow(0.045,h+0.026,0,0.045,0.025,0.023,0.5);
+    bow(-0.045,h+0.026,0,0.045,0.025,0.023,-0.5);
+    bow(0,h+0.016,0,0.02,0.018,0.02,0);
+  }
+
+  /* ---------- 葉に電飾の照り返し（最寄りライト） ---------- */
+  const n=B.lx.length;
+  const nl=new Int16Array(n).fill(-1), nw=new Float32Array(n);
+  for(let i=0;i<n;i++){
+    const m=B.mat[i]; if(m!==MAT_LEAF&&m!==MAT_SNOW&&m!==MAT_SNOWB)continue;
+    let best=0.0324, bi=-1; const x=B.lx[i],yy=B.ly[i],z=B.lz[i];
+    for(let l=0;l<NL;l++){const ddx=x-lX[l],ddy=yy-lY[l],ddz=z-lZ[l];const d2=ddx*ddx+ddy*ddy+ddz*ddz;if(d2<best){best=d2;bi=l;}}
+    if(bi>=0){nl[i]=bi;const d=Math.sqrt(best);nw[i]=Math.pow(1-d/0.18,2);}
+  }
+
+  /* ---------- 型付き配列へ ---------- */
+  N=n;
+  pLx=Float32Array.from(B.lx);pLy=Float32Array.from(B.ly);pLz=Float32Array.from(B.lz);
+  pNx=Float32Array.from(B.nx);pNy=Float32Array.from(B.ny);pNz=Float32Array.from(B.nz);
+  pR=Float32Array.from(B.r);pG=Float32Array.from(B.g);pB=Float32Array.from(B.b);
+  pAo=Float32Array.from(B.ao);pAt=Float32Array.from(B.at);pSeed=Float32Array.from(B.seed);
+  pMat=Uint8Array.from(B.mat);pGrp=Uint16Array.from(B.grp);pEx=Int16Array.from(B.ex);
+  pNl=nl;pNw=nw;
+  NG=GR.x.length;
+  gX=Float32Array.from(GR.x);gY=Float32Array.from(GR.y);gZ=Float32Array.from(GR.z);gAt=Float32Array.from(GR.at);
+  gS=new Float32Array(NG);
+  // 輝きを出す候補の点（生成物の表面）
+  {const ids=[];for(let i=0;i<N;i++){const m2=pMat[i];if(pGrp[i]===0&&m2!==MAT_GND&&m2!==MAT_LIGHT&&m2!==MAT_CORE)ids.push(i);}SPK_IDX=Int32Array.from(ids);}
+}
+
+/* ============================================================
+   画面レイアウト・バッファ（1マス1文字：重なりなし）
+   ============================================================ */
+let cpu0=20,rpu0=10;
+function setView(){const Z=model==='snowman'?1.32:(model==='santa'?1.3:1);cpu=cpu0*Z;rpu=rpu0*Z;return 0.78/cpu;}
+let VW=0,VH=0,CH_H=0,dpr=1,cols=0,rows=0,NC=0,cw=8,chh=14,fs=13,offX=0,offY=0,cpu=20,rpu=10,cxC=0,cyC=0,SP=0.03,fontStr='';
+let zbuf,chB,rB,gB,bB,glB,glI,bgGrad=null;
+let sky=[], BOKEH=[];
+function layout(){
+  dpr=Math.min(2,window.devicePixelRatio||1);
+  VW=window.innerWidth; VH=window.innerHeight;
+  const codeH=Math.round(clamp(VH*0.27,130,320));
+  const statusH=48;
+  CH_H=Math.max(220,VH-codeH-statusH);
+  document.getElementById('code').style.height=codeH+'px';
+  stEl.style.top=CH_H+'px'; stEl.style.height=statusH+'px';
+  for(const id of ['scan','vig'])document.getElementById(id).style.height=CH_H+'px';
+  cv.style.height=CH_H+'px';
+  cv.width=Math.round(VW*dpr); cv.height=Math.round(CH_H*dpr);
+  cols=Math.round(clamp(VW/4.5,84,230));
+  cw=VW/cols;
+  ctx.font='100px '+FONT;
+  const ratio=(ctx.measureText('0').width/100)||0.6;
+  fs=cw/ratio*0.98; chh=fs*1.16;
+  rows=Math.max(30,Math.floor(CH_H/chh));
+  NC=cols*rows;
+  offX=0; offY=Math.max(0,(CH_H-rows*chh)*0.5);
+  fontStr=fs.toFixed(2)+'px '+FONT;
+  const scalePx=Math.min(0.94*rows*chh/4.05,0.98*VW/2.7);
+  cpu0=scalePx/cw; rpu0=scalePx/chh;
+  cxC=cols/2; cyC=rows*0.47;
+  zbuf=new Float32Array(NC);chB=new Uint16Array(NC);
+  rB=new Uint8ClampedArray(NC);gB=new Uint8ClampedArray(NC);bB=new Uint8ClampedArray(NC);
+  glB=new Uint8Array(NC);glI=new Float32Array(NC);
+  bgGrad=ctx.createLinearGradient(0,0,0,CH_H);
+  bgGrad.addColorStop(0,'#02040a');bgGrad.addColorStop(0.6,'#060b18');bgGrad.addColorStop(1,'#0a1222');
+  // 夜空の星
+  const sr=mulberry32(4242); sky=[];
+  const cnt=Math.floor(cols*rows*0.016);
+  const SKC=codes(".'.`+:*..");
+  for(let k=0;k<cnt;k++){
+    const r=Math.floor(sr()*rows*0.68), c=Math.floor(sr()*cols);
+    sky.push({idx:r*cols+c,ch:SKC[Math.floor(sr()*SKC.length)],b:40+sr()*120,ph:sr()*PI2,sp:0.6+sr()*2.4});
+  }
+  // 遠くの街のぼんやりした光（背景イルミネーション用）
+  BOKEH=[];
+  const bc=[1,1,7,2,6,4,1,5];
+  for(let k=0;k<Math.floor(cols*0.4);k++){
+    BOKEH.push({col:Math.floor(sr()*cols),row:Math.floor(rows*(0.36+sr()*0.26)),ch:codes('..o*.')[Math.floor(sr()*5)],
+      b:0.12+sr()*0.2,c:bc[Math.floor(sr()*bc.length)],ph:sr()*PI2,sp:0.4+sr()*1.4,g:sr()<0.3});
+  }
+  return setView();
+}
+
+/* ============================================================
+   パーティクル・雪
+   ============================================================ */
+const MAXP=3600;
+const PX=new Float32Array(MAXP),PY=new Float32Array(MAXP),PZ=new Float32Array(MAXP),
+      VXp=new Float32Array(MAXP),VYp=new Float32Array(MAXP),VZp=new Float32Array(MAXP),
+      PL=new Float32Array(MAXP),PM=new Float32Array(MAXP),PK=new Uint8Array(MAXP),PGv=new Float32Array(MAXP);
+let pHead=0;
+function emit(x,y,z,vx,vy,vz,life,kind,grav){
+  const k=pHead;pHead=(pHead+1)%MAXP;
+  PX[k]=x;PY[k]=y;PZ[k]=z;VXp[k]=vx;VYp[k]=vy;VZp[k]=vz;PL[k]=life;PM[k]=life;PK[k]=kind;PGv[k]=grav;
+}
+const NSNOW=220;
+const SX=new Float32Array(NSNOW),SY=new Float32Array(NSNOW),SZ=new Float32Array(NSNOW),SV=new Float32Array(NSNOW),SPh=new Float32Array(NSNOW),SS=new Float32Array(NSNOW);
+for(let i=0;i<NSNOW;i++){SX[i]=(fxr()-0.5)*6;SY[i]=fxr()*4.2-0.1;SZ[i]=(fxr()-0.5)*6;SV[i]=0.12+fxr()*0.25;SPh[i]=fxr()*PI2;SS[i]=fxr();}
+
+/* ============================================================
+   描画まわり
+   ============================================================ */
+let T=0,last=0,iter=0,fpsS=60,stTimer=0,drawn=0,aliveP=0;
+let ca=1,sa=0,cpit=1,spit=0,ang=0,pitch=0;
+let splashed=false,starBurst=false,giftBurst=[],headAng=0;
+const glows=[];
+const PJ=[0,0,0,0];
+function proj(wx,wy,wz){
+  const x1=wx*ca+wz*sa, z1=wz*ca-wx*sa, y1=wy-CY;
+  const y2=y1*cpit+z1*spit, zz=z1*cpit-y1*spit+D, k=D/zz;
+  PJ[0]=cxC+x1*cpu*k; PJ[1]=cyC-y2*rpu*k; PJ[2]=zz; PJ[3]=k; return PJ;
+}
+function plot(wx,wy,wz,code,r,g,b,gl,gi,bias){
+  const x1=wx*ca+wz*sa, z1=wz*ca-wx*sa, y1=wy-CY;
+  const y2=y1*cpit+z1*spit, zz=z1*cpit-y1*spit+D;
+  if(zz<0.3)return false;
+  const k=D/zz;
+  const col=(cxC+x1*cpu*k+0.5)|0; if(col<0||col>=cols)return false;
+  const row=(cyC-y2*rpu*k+0.5)|0; if(row<0||row>=rows)return false;
+  const idx=row*cols+col, zb=zz+bias;
+  if(zb>=zbuf[idx])return false;
+  zbuf[idx]=zb;chB[idx]=code;rB[idx]=r;gB[idx]=g;bB[idx]=b;glB[idx]=gl;glI[idx]=gi;
+  return true;
+}
+function writeCell(col,row,z,code,r,g,b){
+  if(col<0||col>=cols||row<0||row>=rows)return;
+  const idx=row*cols+col; if(z>=zbuf[idx])return;
+  zbuf[idx]=z;chB[idx]=code;rB[idx]=r;gB[idx]=g;bB[idx]=b;glB[idx]=0;
+}
+function addGlow(wx,wy,wz,size,idx,alpha){
+  const p=proj(wx,wy,wz); if(p[2]<0.3)return;
+  glows.push([offX+(p[0]+0.5)*cw, offY+(p[1]+0.5)*chh, size*cw*p[3], idx, alpha]);
+}
+
+function drawSky(){
+  const tw=smooth(0,2,T);
+  for(let k=0;k<sky.length;k++){
+    const s=sky[k];
+    const v=0.5+0.5*Math.sin(T*s.sp+s.ph);
+    const b=s.b*(0.3+0.7*v*v)*tw;
+    const idx=s.idx; zbuf[idx]=1e8; chB[idx]=s.ch; rB[idx]=b*0.85; gB[idx]=b*0.9; bB[idx]=b*1.1; glB[idx]=0;
+  }
+}
+
+function lightMode(mode,l){
+  if(mode===0){const s=0.5+0.5*Math.sin(T*lSp[l]+lPh[l]);return 0.22+0.78*s*s*s;}
+  if(mode===1){const v=0.5+0.5*Math.sin(T*4.5-lY[l]*7-lTh[l]);return 0.12+0.88*v*v*v*v;}
+  const s=0.5+0.5*Math.sin(T*2.2+(l%2)*Math.PI);return 0.18+0.82*s*s;
+}
+function updateLights(){
+  let m0=0,m1=0,mf=0;
+  if(T>TL.DONE){const md=(T-TL.DONE)/7;m0=Math.floor(md)%3;m1=(m0+1)%3;mf=smooth(0.82,1,md-Math.floor(md));}
+  for(let l=0;l<NL;l++){
+    let b=mf>0?lerp(lightMode(m0,l),lightMode(m1,l),mf):lightMode(m0,l);
+    if(hash(l*31.7+Math.floor(T*7))>0.985)b=1;
+    const age=T-lAt[l]; if(age>=0&&age<0.35)b=1;
+    lightB[l]=b;
+  }
+}
+function updateGroups(){
+  gS[0]=1;
+  for(let g=1;g<NG;g++){
+    const dur=(g===starG)?0.7:0.5;
+    const t=(T-gAt[g])/dur;
+    gS[g]=t<=0?0:easeOutBack(t);
+  }
+}
+
+/* ---------- 点群のレンダリング（Zバッファ＋陰影） ---------- */
+function renderPoints(){
+  for(let i=0;i<N;i++){
+    const at=pAt[i]; if(T<at)continue;
+    const g=pGrp[i]; const sc=gS[g]; if(sc<=0)continue;
+    const wx=gX[g]+pLx[i]*sc, wy=gY[g]+pLy[i]*sc, wz=gZ[g]+pLz[i]*sc;
+    const x1=wx*ca+wz*sa, z1=wz*ca-wx*sa, y1=wy-CY;
+    const y2=y1*cpit+z1*spit, zz=z1*cpit-y1*spit+D;
+    if(zz<0.3)continue;
+    const k=D/zz;
+    const col=(cxC+x1*cpu*k+0.5)|0; if(col<0||col>=cols)continue;
+    const row=(cyC-y2*rpu*k+0.5)|0; if(row<0||row>=rows)continue;
+    const m=pMat[i]; const P=MPAR[m];
+    const idx=row*cols+col; const zb=zz+P[5];
+    if(zb>=zbuf[idx])continue;
+
+    let r,gg,b,code=C_DOT,glw=0,gli=0;
+    if(m===MAT_LIGHT){
+      const li=pEx[i]; const bb=lightB[li]; const C=LCOL[lC[li]]; const w=bb*bb*bb*bb;
+      r=C[0]*(0.3+0.7*bb)+255*w*0.45; gg=C[1]*(0.3+0.7*bb)+255*w*0.45; b=C[2]*(0.3+0.7*bb)+255*w*0.45;
+      code=bb>0.85?C_AT:bb>0.66?C_STAR:bb>0.46?C_PLUS:bb>0.26?C_COLON:C_DOT;
+      glw=lC[li]+1; gli=bb;
+    }else{
+      const nx0=pNx[i],ny0=pNy[i],nz0=pNz[i];
+      const n1x=nx0*ca+nz0*sa, n1z=nz0*ca-nx0*sa;
+      const n2y=ny0*cpit+n1z*spit, n2z=n1z*cpit-ny0*spit;
+      const ndl=n1x*LX+n2y*LY+n2z*LZ;
+      const dif=P[6]?Math.max(0,(ndl+0.4)*0.7142857):(ndl>0?ndl:0);
+      let spec=0; if(P[2]>0){const nh=n1x*HX+n2y*HY+n2z*HZ; if(nh>0)spec=Math.pow(nh,P[3])*P[2];}
+      let rim=1-(n2z<0?-n2z:n2z); rim=rim*rim*rim*P[4];
+      let fade=1.12-(zz-D)*0.14; fade=fade<0.62?0.62:(fade>1.25?1.25:fade);
+      let ao=pAo[i];
+      if(m===MAT_GND){const sg=pEx[i]; if(sg>0)ao*=1-0.6*Math.min(1,gS[sg]);}
+      const I=(P[0]+P[1]*dif)*ao*fade;
+      const cr=pR[i],cg=pG[i],cb=pB[i];
+      r=cr*I+spec*(185+cr*0.3)+rim*70;
+      gg=cg*I+spec*(185+cg*0.3)+rim*100;
+      b=cb*I+spec*(185+cb*0.3)+rim*165;
+      let L=I*0.72+spec*0.5;
+      const seed=pSeed[i];
+      const nl=pNl[i];
+      if(nl>=0&&T>=lAt[nl]){const lb=lightB[nl]*pNw[i];const C=LCOL[lC[nl]];r+=C[0]*lb*0.55;gg+=C[1]*lb*0.55;b+=C[2]*lb*0.55;L+=lb*0.3;}
+      switch(m){
+        case MAT_LEAF: case MAT_SNOW: {
+          if(m===MAT_LEAF){const rp=seed<0.18?RP_DIG:RP_LEAF;code=rp[ci(L,rp.length)];}
+          else if(hash(seed*913.7+Math.floor(T*5+seed*7))>0.985){code=C_STAR;r=gg=b=255;glw=1;gli=0.3;}
+          else code=RP_SNOW[ci(L,RP_SNOW.length)];
+          break;
+        }
+        case MAT_CORE: code=RP_LEAF[ci(L*0.7,RP_LEAF.length)]; break;
+        case MAT_BRANCH: code=RP_BRANCH[ci(L,RP_BRANCH.length)]; break;
+        case MAT_BARK: {
+          if(L<0.16)code=C_DOT;
+          else if(L<0.28)code=C_COLON;
+          else if(wy<0.08&&Math.abs(n1x)>0.35)code=n1x>0?C_BSLASH:C_SLASH;
+          else if(Math.abs(n1x)>0.78)code=n1x>0?C_RP:C_LP;
+          else if(seed>0.82)code=L>0.6?C_HASH:C_PCT;
+          else if(seed<0.18)code=C_ONE;
+          else code=C_PIPE;
+          break;
+        }
+        case MAT_ORN:
+          if(spec>0.5){code=C_AT;}else code=RP_ORN[ci(L,RP_ORN.length)];
+          if(spec>0.8){glw=1;gli=0.22;}
+          break;
+        case MAT_ORNB: code=L>0.55?C_EQ:C_MINUS; break;
+        case MAT_CAP: code=C_CARET; break;
+        case MAT_TIN:
+          if(hash(seed*517.3+Math.floor(T*9+seed*3))>0.92){code=C_STAR;r=255;gg=240;b=190;glw=8;gli=0.28;}
+          else code=RP_TIN[ci(L,RP_TIN.length)];
+          break;
+        case MAT_RIB: code=RP_RIB[ci(L,RP_RIB.length)]; break;
+        case MAT_STAR: {
+          const pulse=0.15*Math.sin(T*4+seed*2);
+          L+=pulse; r+=40*pulse; gg+=30*pulse;
+          code=RP_STAR[ci(L,RP_STAR.length)];
+          if(L>0.8){glw=8;gli=0.22;}
+          break;
+        }
+        case MAT_GIFT: {
+          const ex=pEx[i];
+          if(ex&4)code=L>0.45?C_PLUS:C_MINUS;
+          else if(ex&8)code=(ex&16)?C_ZERO:C_SLASH;
+          else code=RP_GIFT[ci(L,RP_GIFT.length)];
+          if(L<0.12)code=C_DOT;
+          break;
+        }
+        case MAT_GRIB: { const ex=pEx[i]; code=L<0.28?C_COLON:(ex===1?C_PIPE:C_HASH); break; }
+        case MAT_BOW: code=RP_BOW[ci(L,RP_BOW.length)]; break;
+        case MAT_SNOWB:
+          b+=30*(1-dif)*ao; gg+=8*(1-dif)*ao;
+          if(hash(seed*611.3+Math.floor(T*4+seed*9))>0.986&&L>0.4){code=C_STAR;r=gg=b=255;glw=1;gli=0.3;}
+          else{const rp=seed<0.08?RP_DIG:RP_SNOWB;code=rp[ci(L,rp.length)];}
+          break;
+        case MAT_FUR:
+          b+=26*(1-dif)*ao; gg+=6*(1-dif)*ao;
+          if(hash(seed*455.1+Math.floor(T*4+seed*9))>0.99&&L>0.4){code=C_STAR;r=gg=255;b=240;glw=1;gli=0.28;}
+          else code=RP_FUR[ci(L,RP_FUR.length)];
+          break;
+        case MAT_COAL: code=RP_COAL[ci(L*0.6+0.3,RP_COAL.length)]; break;
+        case MAT_CARROT: code=RP_CARROT[ci(L,RP_CARROT.length)]; break;
+        case MAT_TWIG: code=RP_TWIG[ci(L+0.15,RP_TWIG.length)]; break;
+        case MAT_SCARF: code=RP_SCARF[ci(L,RP_SCARF.length)]; break;
+        case MAT_CLOTH: {const rp=seed<0.15?RP_DIG:RP_CLOTH;code=rp[ci(L,rp.length)];break;}
+        case MAT_SKIN: code=RP_SKIN[ci(L,RP_SKIN.length)]; break;
+        case MAT_LEATHER: code=RP_LEATH[ci(L*0.8+0.12,RP_LEATH.length)]; break;
+        case MAT_GOLD:
+          code=RP_GOLD[ci(L,RP_GOLD.length)];
+          if(hash(seed*301.7+Math.floor(T*8))>0.9){code=C_STAR;r=255;gg=240;b=180;glw=8;gli=0.35;}
+          break;
+        case MAT_SACK: code=RP_SACK[ci(L,RP_SACK.length)]; break;
+        case MAT_METAL: code=spec>0.55?C_AT:RP_METAL[ci(L,RP_METAL.length)]; break;
+        case MAT_GND:
+          if(hash(seed*733.1+Math.floor(T*3+seed*5))>0.994&&L>0.25){code=C_STAR;r=220;gg=235;b=255;}
+          else code=RP_GND[ci(L*0.85,RP_GND.length)];
+          break;
+      }
+      // 出現時のキラッとした発光
+      if(m===MAT_GND){
+        const age=T-at;
+        if(age<0.35){const f=1-age/0.35;r=lerp(r,230,f);gg=lerp(gg,245,f);b=lerp(b,255,f);if(f>0.5)code=C_PLUS;}
+      }else if(g===0&&(m===MAT_TIN||m===MAT_RIB||m===MAT_SCARF||(m===MAT_FUR&&at>TL.SP_START))){
+        const age=T-at;
+        if(age<0.4){const f=1-age/0.4;r=lerp(r,255,f);gg=lerp(gg,240,f);b=lerp(b,200,f);if(f>0.5)code=C_STAR;}
+      }else if(g===0){
+        const age=T-at;
+        if(age<0.5){const f=(1-age*2)*(1-age*2);r=lerp(r,235,f*0.85);gg=lerp(gg,255,f*0.85);b=lerp(b,235,f*0.85);if(f>0.45)code=C_STAR;}
+      }else{
+        const age=T-gAt[g];
+        if(age<0.35){const f=1-age/0.35;r=lerp(r,255,f*0.7);gg=lerp(gg,250,f*0.7);b=lerp(b,235,f*0.7);}
+      }
+    }
+    zbuf[idx]=zb;chB[idx]=code;rB[idx]=r;gB[idx]=gg;bB[idx]=b;glB[idx]=glw;glI[idx]=gli;
+  }
+}
+
+/* ---------- 演出（雫・波紋・キラキラ・螺旋・雪） ---------- */
+const RIP_CH=codes('~-*+.');
+const SPK_CH=[C_STAR,C_PLUS,C_QUOTE,C_COLON,C_DOT];
+function fx(dt){
+  // 1. 白い雫
+  if(T>=TL.DROP_START&&T<TL.DROP_END){
+    const p=(T-TL.DROP_START)/(TL.DROP_END-TL.DROP_START);
+    const y=3.9*(1-p*p)+0.03;
+    if(plot(0,y,0,C_AT,255,255,255,1,0.9,-0.3)) addGlow(0,y,0,7,0,0.9); else addGlow(0,y,0,7,0,0.4);
+    for(let k=0;k<8;k++){const a=k/8*PI2;plot(Math.cos(a)*0.04,y+0.01,Math.sin(a)*0.04,k%2?C_ZERO:C_STAR,215,235,255,0,0,-0.2);}
+    plot(0,y+0.05,0,C_ZERO,230,240,255,0,0,-0.2);
+    const tc=[C_PIPE,C_PIPE,C_COLON,C_COLON,C_QUOTE,C_DOT,C_DOT];
+    for(let j=1;j<=7;j++){const yy=y+0.05+j*(0.035+0.12*p);const f=1-j/8;plot(0,yy,0,tc[j-1],150+105*f,170+85*f,200+55*f,0,0,0);}
+  }
+  // 着地の飛沫
+  if(T>=TL.DROP_END&&!splashed){
+    splashed=true;
+    for(let k=0;k<90;k++){const a=fxr()*PI2,s=0.2+fxr()*0.7;emit(0,0.03,0,Math.cos(a)*s,0.6+fxr()*1.3,Math.sin(a)*s,0.5+fxr()*0.7,fxr()<0.8?0:6,2.8);}
+  }
+  // 白いキラキラの波紋（3重）
+  for(let w=0;w<3;w++){
+    const st=TL.RIPPLE+w*0.38, age=T-st, life=1.9;
+    if(age<0||age>life)continue;
+    const rr=age*TL.RIPPLE_SPEED, al=1-age/life;
+    const count=Math.min(800,Math.ceil(PI2*rr*cpu*1.1)+8);
+    for(let j=0;j<count;j++){
+      const a=j/count*PI2;
+      const h=hash(j*1.37+w*977+Math.floor(T*12));
+      const code=h>0.88?RIP_CH[2]:h>0.72?RIP_CH[3]:h>0.4?RIP_CH[0]:h>0.2?RIP_CH[1]:RIP_CH[4];
+      const br=(0.45+0.55*(h>0.72?1:0.6))*al;
+      plot(Math.cos(a)*rr,0.006,Math.sin(a)*rr,code,255*br,255*br,255*Math.min(1,br*1.08),h>0.95?1:0,al*0.5,-0.04);
+    }
+    const r2=rr*0.86;
+    if(r2>0.05){const c2=Math.min(500,Math.ceil(PI2*r2*cpu*0.5)+6);
+      for(let j=0;j<c2;j++){const a=j/c2*PI2+0.1;plot(Math.cos(a)*r2,0.004,Math.sin(a)*r2,C_DOT,170*al,210*al,240*al,0,0,-0.02);}}
+  }
+  // 2. 下から上へ：中心から3つの光が螺旋状にゆっくり広がり、ツリーの外周に繋がって上昇
+  if(T>=TL.SPREAD_START&&T<TL.GROW_END+0.25){
+    const e=smooth(TL.SPREAD_START,TL.GROW_START,T);          // 広がり 0→1（始めと終わりが滑らか）
+    const gp=clamp((T-TL.GROW_START)/(TL.GROW_END-TL.GROW_START),0,1);
+    const gH=gp*TOP_Y;
+    const hy=Math.max(gH,0.04+0.02*(1-e));
+    const R=outerR(gH)*e;                                     // e=1で外周半径と一致 → 継ぎ目なし
+    headAng+=(1.6+3.6*e)*dt;                                  // 中心ではゆっくり、外へ出るほど速く
+    // 外周のキラキラ（広がるにつれて増える）
+    const ne=Math.round(1700*dt*e*e);
+    for(let q=0;q<ne;q++){
+      const a=fxr()*PI2, rr=R*(0.78+0.3*fxr());
+      emit(Math.cos(a)*rr,hy+fxr()*0.05,Math.sin(a)*rr,Math.cos(a)*0.08,0.25+fxr()*0.5,Math.sin(a)*0.08,0.4+fxr()*0.6,fxr()<0.65?0:(fxr()<0.5?3:7),-0.15);
+    }
+    for(let h=0;h<3;h++){
+      const a=headAng+h*PI2/3;
+      const hx=Math.cos(a)*R, hz=Math.sin(a)*R;
+      const vis=plot(hx,hy,hz,C_AT,255,255,240,1,1,-0.3);
+      addGlow(hx,hy,hz,6,0,vis?0.85:0.3);
+      // 通った跡に残る光の尾
+      for(let q=0;q<3;q++)emit(hx,hy,hz,(fxr()-0.5)*0.12,0.05+fxr()*0.2*(0.3+e),(fxr()-0.5)*0.12,0.5+fxr()*0.6,q===0?7:0,-0.05);
+    }
+  }
+  // てっぺん到達：星のバースト
+  if(T>=TL.STAR&&!starBurst){
+    starBurst=true;
+    for(let k=0;k<120;k++){
+      const u=fxr()*2-1,a=fxr()*PI2,s=0.5+fxr()*1.1,rr=Math.sqrt(1-u*u);
+      emit(TOP_POS[0],TOP_POS[1],TOP_POS[2],Math.cos(a)*rr*s,u*s,Math.sin(a)*rr*s,0.6+fxr()*0.8,fxr()<0.6?7:0,0.4);
+    }
+  }
+  if(model==='tree'&&T>=TL.STAR&&gS[starG]>0) addGlow(0,STAR_Y,0,9+2*Math.sin(T*3),7,0.5+0.2*Math.sin(T*2.3));
+  // 3. 螺旋降下：飾り付けの光
+  if(T>=TL.SP_START&&T<=TL.SP_START+TL.SP_DUR+0.1){
+    const s=clamp((T-TL.SP_START)/TL.SP_DUR,0,1);
+    const y=SP_TOP-s*(SP_TOP-SP_BOT), th=SP_TH0+s*SP_TURNS*PI2, r=outerR(y)+0.03;
+    const hx=Math.cos(th)*r, hz=Math.sin(th)*r;
+    const vis=plot(hx,y,hz,C_AT,255,250,225,8,1,-0.3);
+    addGlow(hx,y,hz,10,7,vis?0.95:0.35);
+    addGlow(hx,y,hz,5,0,vis?0.8:0.2);
+    const ne=Math.round(1300*dt);
+    for(let q=0;q<ne;q++){
+      emit(hx+(fxr()-0.5)*0.06,y+(fxr()-0.5)*0.06,hz+(fxr()-0.5)*0.06,(fxr()-0.5)*0.3,(fxr()-0.5)*0.3,(fxr()-0.5)*0.3,0.5+fxr()*0.7,fxr()<0.55?7:0,0.25);
+    }
+  }
+  // 華やかさ：生成物の表面からときどき輝きが立ちのぼる
+  if(model!=='tree'&&T>TL.SP_START&&SPK_IDX.length){
+    const ne=Math.floor((T>TL.DONE?38:16)*dt+fxr());
+    for(let q=0;q<ne;q++){const i=SPK_IDX[Math.floor(fxr()*SPK_IDX.length)];
+      emit(pLx[i]+pNx[i]*0.03,pLy[i]+pNy[i]*0.03,pLz[i]+pNz[i]*0.03,pNx[i]*0.05,0.06+fxr()*0.1,pNz[i]*0.05,0.7+fxr()*0.7,fxr()<0.55?0:7,-0.04);}
+  }
+  // 4. プレゼント出現のポン！
+  for(let k=0;k<gifts.length;k++){
+    const G=gifts[k];
+    if(T>=G.at&&!giftBurst[k]){
+      giftBurst[k]=true;
+      for(let q=0;q<34;q++){const a=fxr()*PI2,s=0.25+fxr()*0.6;
+        emit(G.x,G.h*0.8,G.z,Math.cos(a)*s,0.7+fxr()*0.9,Math.sin(a)*s,0.6+fxr()*0.6,2+Math.floor(fxr()*6),2.2);}
+    }
+  }
+  // パーティクル更新と描画
+  aliveP=0;
+  for(let k=0;k<MAXP;k++){
+    if(PL[k]<=0)continue;
+    PL[k]-=dt; if(PL[k]<=0)continue;
+    aliveP++;
+    VYp[k]-=PGv[k]*dt;
+    const dr=Math.pow(0.35,dt);
+    VXp[k]*=dr;VYp[k]*=dr;VZp[k]*=dr;
+    PX[k]+=VXp[k]*dt;PY[k]+=VYp[k]*dt;PZ[k]+=VZp[k]*dt;
+    if(PY[k]<0.005){PY[k]=0.005;VYp[k]*=-0.3;}
+    const lf=PL[k]/PM[k];
+    const tw=hash(k*7.1+Math.floor(T*14));
+    const ciX=lf>0.72?0:lf>0.5?1:lf>0.3?(tw>0.5?2:3):4;
+    const code=tw>0.93?C_STAR:SPK_CH[ciX];
+    const C=LCOL[PK[k]]; const br=0.35+0.65*lf; const wv=lf*0.3*255;
+    plot(PX[k],PY[k],PZ[k],code,C[0]*br+wv,C[1]*br+wv,C[2]*br+wv,(lf>0.55&&k%3===0)?PK[k]+1:0,lf*0.6,-0.08);
+  }
+  // 舞い落ちる雪
+  const sf=smooth(3.5,7,T);
+  if(sf>0){
+    for(let i=0;i<NSNOW;i++){
+      SY[i]-=SV[i]*dt; SX[i]+=Math.sin(T*0.7+SPh[i])*0.06*dt; SZ[i]+=Math.cos(T*0.5+SPh[i])*0.04*dt;
+      if(SY[i]<0){SY[i]=4.1;SX[i]=(fxr()-0.5)*6;SZ[i]=(fxr()-0.5)*6;}
+      const code=SS[i]<0.6?C_DOT:SS[i]<0.88?C_PLUS:C_STAR;
+      const br=(90+80*SS[i])*sf;
+      plot(SX[i],SY[i],SZ[i],code,br*0.85,br*0.92,br*1.1,0,0,0.05);
+    }
+  }
+}
+
+/* ---------- 背景イルミネーション（雪だるま・サンタ） ---------- */
+const C_O=cc('o');
+function drawIllum(){
+  if(model==='tree')return;
+  const fa=smooth(TL.GROW_START+1,TL.GROW_START+4,T); if(fa<=0)return;
+  for(let sI=0;sI<2;sI++){                           // 上部に垂れ下がる電飾のストリング
+    const segW=Math.max(16,Math.floor(cols/(sI?3.2:2.4)));
+    const base=3+sI*Math.round(rows*0.07), sag=Math.max(2,Math.round(rows*(sI?0.045:0.065)));
+    const off=sI*Math.floor(segW/2);
+    for(let c=0;c<cols;c++){
+      const u=((c+off)%segW)/segW, row=Math.round(base+sag*Math.sin(Math.PI*u));
+      if(((c+off)%4)===0&&u>0.04&&u<0.96){
+        const li=(c*7+sI*3)%6+1, C=LCOL[li];
+        const tw=0.5+0.5*Math.sin(T*(1.3+((c*13)%7)*0.25)+c*1.7+sI);
+        const b=(0.25+0.42*tw*tw)*fa;
+        writeCell(c,row,9e7,tw>0.85?C_STAR:C_O,C[0]*b,C[1]*b,C[2]*b);
+        if(tw>0.4)glows.push([offX+(c+0.5)*cw,offY+(row+0.5)*chh,cw*3.4,li,0.2*tw*fa]);
+      }else writeCell(c,row,9.5e7,C_MINUS,34*fa,44*fa,40*fa);
+    }
+  }
+  for(let k=0;k<BOKEH.length;k++){                   // 遠くの街の光
+    const o=BOKEH[k], tw=0.6+0.4*Math.sin(T*o.sp+o.ph), v=o.b*tw*fa, C=LCOL[o.c];
+    writeCell(o.col,o.row,9e7,o.ch,C[0]*v,C[1]*v,C[2]*v);
+    if(o.g)glows.push([offX+(o.col+0.5)*cw,offY+(o.row+0.5)*chh,cw*4,o.c,0.1*tw*fa]);
+  }
+}
+
+/* ---------- 金色のトナカイ（サンタの周りを走る） ---------- */
+function drawReindeer(dt){
+  if(model!=='santa'||!RDN)return;
+  for(let rI=0;rI<4;rI++){
+    const st=TL.GIFT_START+rI*0.45; if(T<st)continue;
+    const age=T-st, sc=easeOutBack(age/0.55);
+    const th=rI*Math.PI/2+0.7*(T-TL.GIFT_START)+0.4, ea=0.98, eb=1.2;
+    const px=Math.cos(th)*ea, pz=Math.sin(th)*eb;
+    let fx=-Math.sin(th)*ea, fz=Math.cos(th)*eb; const fl=Math.hypot(fx,fz); fx/=fl; fz/=fl;
+    const sx=-fz, sz=fx;
+    // ギャロップ：左右の脚に位相のズレ（前左→前右→後左→後右）
+    const ph=T*9.5+rI*1.7, bob=0.035*(0.5+0.5*Math.sin(ph+1.2));
+    const HC=[],HS=[],KC=[],KS=[];
+    for(let l=0;l<4;l++){
+      const q=ph-[0,0.2,0.5,0.68][l]*PI2;
+      const front=l<2;
+      const hip=(front?0.6:0.5)*Math.sin(q);                        // 股関節の振り（+で前へ）
+      const swing=Math.max(0,Math.cos(q));                           // 脚を前へ戻す間だけ大きく曲げる
+      const kneeA=front?-(0.15+1.15*Math.pow(swing,1.4)):(0.1+0.95*Math.pow(swing,1.4));
+      HC[l]=Math.cos(hip);HS[l]=Math.sin(hip);KC[l]=Math.cos(kneeA);KS[l]=Math.sin(kneeA);
+    }
+    if(!giftBurst[rI]){giftBurst[rI]=true;
+      for(let q=0;q<40;q++){const a=fxr()*PI2,s=0.25+fxr()*0.6;emit(px,0.35,pz,Math.cos(a)*s,0.5+fxr()*0.9,Math.sin(a)*s,0.6+fxr()*0.6,fxr()<0.7?7:0,1.6);}}
+    for(let i=0;i<RDN;i++){
+      let lx=RD.x[i],ly=RD.y[i],lz=RD.z[i],nx=RD.nx[i],ny=RD.ny[i],nz=RD.nz[i];
+      const lg=RD.leg[i];
+      if(lg>=0){
+        const l=lg&3;
+        if(lg>=4){const kp=RKNEE[l],c=KC[l],s=KS[l];const dx=lx-kp[0],dy=ly-kp[1];      // ひざで曲げる
+          lx=kp[0]+dx*c-dy*s;ly=kp[1]+dx*s+dy*c;const n2=nx*c-ny*s;ny=nx*s+ny*c;nx=n2;}
+        const p=RPIV[l],c=HC[l],s=HS[l];const dx=lx-p[0],dy=ly-p[1];                     // 股関節で振る
+        lx=p[0]+dx*c-dy*s;ly=p[1]+dx*s+dy*c;const n2=nx*c-ny*s;ny=nx*s+ny*c;nx=n2;}
+      const wx=px+(fx*lx+sx*lz)*sc, wy=ly*sc+bob, wz=pz+(fz*lx+sz*lz)*sc;
+      const wnx=fx*nx+sx*nz, wnz=fz*nx+sz*nz;
+      const x1=wx*ca+wz*sa, z1=wz*ca-wx*sa, y1=wy-CY;
+      const y2=y1*cpit+z1*spit, zz=z1*cpit-y1*spit+D; if(zz<0.3)continue;
+      const k=D/zz;
+      const col=(cxC+x1*cpu*k+0.5)|0; if(col<0||col>=cols)continue;
+      const row=(cyC-y2*rpu*k+0.5)|0; if(row<0||row>=rows)continue;
+      const idx=row*cols+col, zb=zz-0.01; if(zb>=zbuf[idx])continue;
+      const n1x=wnx*ca+wnz*sa, n1z=wnz*ca-wnx*sa, n2y=ny*cpit+n1z*spit, n2z=n1z*cpit-ny*spit;
+      const ndl=n1x*LX+n2y*LY+n2z*LZ, dif=ndl>0?ndl:0;
+      const nh=n1x*HX+n2y*HY+n2z*HZ, spec=nh>0?Math.pow(nh,28):0;
+      let rim=1-(n2z<0?-n2z:n2z); rim=rim*rim*rim*0.35;
+      let fade=1.12-(zz-D)*0.14; fade=fade<0.62?0.62:(fade>1.25?1.25:fade);
+      const I=(0.32+0.8*dif)*fade*RD.t[i];
+      let r=240*I+spec*235+rim*70, g=188*I+spec*215+rim*70, b=70*I+spec*150+rim*110;
+      const L=I*0.72+spec*0.6;
+      let code=RP_GOLD[ci(L,RP_GOLD.length)], gl=0, gi=0;
+      if(spec>0.6){gl=8;gi=0.3;}
+      if(hash(RD.sd[i]*733+Math.floor(T*7)+rI*31)>0.975){code=C_STAR;r=255;g=245;b=200;gl=8;gi=0.4;}
+      if(age<0.35){const f=1-age/0.35;r=lerp(r,255,f);g=lerp(g,250,f);b=lerp(b,220,f);}
+      zbuf[idx]=zb;chB[idx]=code;rB[idx]=r;gB[idx]=g;bB[idx]=b;glB[idx]=gl;glI[idx]=gi;
+    }
+    // ひづめから舞う金の粉
+    const ne=Math.floor(60*dt+fxr());
+    for(let q=0;q<ne;q++)emit(px-fx*0.18*sc+(fxr()-0.5)*0.1,0.04+fxr()*0.05,pz-fz*0.18*sc+(fxr()-0.5)*0.1,(fxr()-0.5)*0.15,0.15+fxr()*0.25,(fxr()-0.5)*0.15,0.5+fxr()*0.5,fxr()<0.7?7:0,0.1);
+  }
+}
+
+/* ---------- 星の長い光条 ---------- */
+function starRays(){
+  if(model!=='tree'||T<TL.STAR+0.3||gS[starG]<0.5)return;
+  const p=proj(0,STAR_Y,0); const c0=p[0],r0=p[1],z0=p[2]+0.25,k=p[3];
+  const tw=0.55+0.45*Math.sin(T*3.1), tw2=0.55+0.45*Math.sin(T*3.1+Math.PI);
+  const radC=0.18*cpu*k, radR=0.18*rpu*k;
+  // [dc, dr, 文字, 瞬き, 開始距離, 長さ]
+  const dirs=[[1,0,C_MINUS,tw,radC,0.55*cpu*k],[-1,0,C_MINUS,tw,radC,0.55*cpu*k],
+              [0,1,C_PIPE,tw,radR,0.32*rpu*k],[0,-1,C_PIPE,tw,radR,0.42*rpu*k],
+              [0.5,-1,C_BSLASH,tw2,radR,0.4*rpu*k],[-0.5,-1,C_SLASH,tw2,radR,0.4*rpu*k],
+              [0.5,1,C_SLASH,tw2,radR,0.22*rpu*k],[-0.5,1,C_BSLASH,tw2,radR,0.22*rpu*k]];
+  for(const d of dirs){
+    const len=Math.max(2,Math.round(d[5]*(0.55+0.6*d[3])));
+    const st=Math.ceil(d[4]);
+    for(let j=0;j<len;j++){
+      const f=Math.pow(1-j/len,1.3)*d[3];
+      const dist=st+j;
+      const col=Math.round(c0+d[0]*dist), row=Math.round(r0+d[1]*dist);
+      const code=(j%3===2&&d[1]===0)?C_PLUS:(j===len-1?C_DOT:d[2]);
+      writeCell(col,row,z0,code,255*f+25,228*f+18,140*f+8);
+    }
+  }
+}
+
+/* ---------- 完成後のメッセージ ---------- */
+function banner(){
+  if(T<TL.DONE)return;
+  const txt=cols>=46?'*  M E R R Y   C H R I S T M A S  *':'* MERRY CHRISTMAS *';
+  const shown=Math.floor((T-TL.DONE)/0.06);
+  const row=1;
+  const c0=Math.floor((cols-txt.length)/2);
+  for(let r=0;r<=2;r++)for(let c=c0-2;c<c0+txt.length+2;c++){if(c<0||c>=cols)continue;const idx=r*cols+c;zbuf[idx]=-1e9;chB[idx]=0;glB[idx]=0;}
+  for(let i=0;i<txt.length&&i<shown;i++){
+    const ch=txt.charCodeAt(i); if(ch===32)continue;
+    if(c0+i<0||c0+i>=cols)continue;
+    const c=hsv(i*0.06+T*0.12,0.5,1); const pulse=0.75+0.25*Math.sin(T*3+i*0.5);
+    const idx=row*cols+c0+i;
+    zbuf[idx]=-1e9;chB[idx]=ch;rB[idx]=c[0]*pulse;gB[idx]=c[1]*pulse;bB[idx]=c[2]*pulse;glB[idx]=(i%4===0)?1:0;glI[idx]=0.2;
+  }
+}
+
+/* ---------- 画面へ出力（1マスに1文字、幅を超えないよう制限） ---------- */
+function present(){
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.globalAlpha=1;
+  ctx.globalCompositeOperation='source-over';
+  ctx.fillStyle=bgGrad; ctx.fillRect(0,0,VW,CH_H);
+  // グロー（加算合成）
+  ctx.globalCompositeOperation='lighter';
+  for(let row=0,idx=0;row<rows;row++){
+    for(let col=0;col<cols;col++,idx++){
+      const gl=glB[idx]; if(!gl||!chB[idx])continue;
+      const gi=glI[idx]; const s=cw*(3+5.5*gi);
+      ctx.globalAlpha=Math.min(1,0.18+gi*0.55);
+      ctx.drawImage(SPR[gl-1],offX+(col+0.5)*cw-s/2,offY+(row+0.5)*chh-s/2,s,s);
+    }
+  }
+  for(let k=0;k<glows.length;k++){
+    const g=glows[k]; ctx.globalAlpha=Math.min(1,g[4]);
+    ctx.drawImage(SPR[g[3]],g[0]-g[2]/2,g[1]-g[2]/2,g[2],g[2]);
+  }
+  ctx.globalAlpha=1;
+  ctx.globalCompositeOperation='source-over';
+  // 文字
+  ctx.font=fontStr; ctx.textBaseline='middle'; ctx.textAlign='center';
+  let lastStyle=''; drawn=0;
+  const mw=cw*0.98;
+  for(let row=0,idx=0;row<rows;row++){
+    const py=offY+(row+0.5)*chh;
+    for(let col=0;col<cols;col++,idx++){
+      const code=chB[idx]; if(!code)continue;
+      const st='rgb('+rB[idx]+','+gB[idx]+','+bB[idx]+')';
+      if(st!==lastStyle){ctx.fillStyle=st;lastStyle=st;}
+      ctx.fillText(CH[code],offX+(col+0.5)*cw,py,mw);
+      drawn++;
+    }
+  }
+}
+
+/* ---------- ステータス表示 ---------- */
+function phaseName(){
+  if(T<TL.DROP_END)return 'drop';
+  if(T<TL.SPREAD_START)return 'ripple';
+  if(T<TL.GROW_START)return 'spread';
+  if(T<TL.GROW_END)return 'growing';
+  if(T<TL.SP_START)return 'star';
+  if(T<TL.SP_START+TL.SP_DUR)return 'decorating';
+  if(T<TL.DONE)return 'gifts';
+  return 'complete';
+}
+function status(dt){
+  stTimer-=dt; if(stTimer>0)return; stTimer=0.12;
+  let lit=0; for(let l=0;l<NL;l++)if(T>=lAt[l])lit++;
+  let on=0; for(const a of decoAts)if(T>=a)on++;
+  let gn=0; for(const a of giftAts)if(T>=a)gn++;
+  let rd=0; for(let r=0;r<4;r++)if(T>=TL.GIFT_START+r*0.45)rd++;
+  const rot=((ang*180/Math.PI)%360+360)%360, tilt=pitch*180/Math.PI;
+  const mm=String(Math.floor(T/60)).padStart(2,'0'), ss=(T%60).toFixed(2).padStart(5,'0');
+  stEl.textContent=
+    'frame '+String(iter).padStart(6,'0')+' . t+'+mm+':'+ss+' . '+phaseName()+(T>TL.DONE?'  [tap: replay]':'')+'\n'+
+    'model '+model+'   rotation '+rot.toFixed(2).padStart(6)+'deg  tilt '+tilt.toFixed(1)+'deg   '+(model==='santa'?'details '+on+'/'+ORN_N+'  reindeer '+rd+'/4':(model==='tree'?'lights '+lit+'/'+NL+'  ornaments ':'lights '+lit+'/'+NL+'  details ')+on+'/'+ORN_N+'  gifts '+gn+'/'+GIFT_N)+'\n'+
+    'points '+N.toLocaleString()+(model==='tree'?'  branches '+BRANCH_N:'')+'  glyphs '+drawn.toLocaleString()+'  particles '+aliveP+'  grid '+cols+'x'+rows;
+  runTxt.textContent='running . '+Math.round(fpsS)+' fps';
+}
+
+/* ============================================================
+   実行中コードの表示（このスクリプト自身）
+   ============================================================ */
+const runTxt=document.getElementById('runTxt');
+const codeInner=document.getElementById('codeInner');
+const codeView=document.getElementById('codeView');
+const SRC=document.getElementById('main').textContent.replace(/^\n/,'').split('\n');
+const KW=new Set(['const','let','var','function','for','if','else','return','while','break','continue','case','switch','new','of','in','typeof','true','false','null']);
+function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function sp(c,s){return '<span class="'+c+'">'+esc(s)+'</span>';}
+function hl(s,st){
+  let out='',i=0;
+  while(i<s.length){
+    if(st.inC){const e=s.indexOf('*/',i);const end=e<0?s.length:e+2;out+=sp('c',s.slice(i,end));i=end;if(e>=0)st.inC=false;continue;}
+    const c=s[i];
+    if(c==='/'&&s[i+1]==='*'){st.inC=true;continue;}
+    if(c==='/'&&s[i+1]==='/'){out+=sp('c',s.slice(i));break;}
+    if(c==='"'||c==="'"||c==='`'){let j=i+1;while(j<s.length&&s[j]!==c){if(s[j]==='\\')j++;j++;}j++;out+=sp('s',s.slice(i,j));i=j;continue;}
+    if(c>='0'&&c<='9'&&!/[\w$]/.test(s[i-1]||'')){let j=i;while(j<s.length&&/[0-9.e]/.test(s[j]))j++;out+=sp('n',s.slice(i,j));i=j;continue;}
+    if(/[A-Za-z_$]/.test(c)){
+      let j=i;while(j<s.length&&/[\w$]/.test(s[j]))j++;
+      const w=s.slice(i,j);let k=j;while(s[k]===' ')k++;
+      const cls=KW.has(w)?'k':(s[k]==='('?'f':(/^[A-Z][A-Z0-9_]+$/.test(w)?'C':''));
+      out+=cls?sp(cls,w):esc(w);i=j;continue;
+    }
+    out+=esc(c);i++;
+  }
+  return out;
+}
+{
+  const st={inC:false};let html='';
+  for(let i=0;i<SRC.length;i++)html+='<div class="ln"><span class="no">'+(i+1)+'</span>'+(hl(SRC[i],st)||' ')+'</div>';
+  codeInner.innerHTML=html;
+}
+const LINES=codeInner.children;
+function findLine(key){
+  for(let i=0;i<SRC.length;i++){const t=SRC[i].trim();if((t.startsWith('//')||t.startsWith('function'))&&t.indexOf(key)>=0)return i;}
+  return 0;
+}
+const REG={};
+for(const [name,key] of [['drop','1. 白い雫'],['ripple','白いキラキラの波紋'],['grow','2. 下から上へ'],['star','てっぺん到達'],
+  ['spiral','3. 螺旋降下'],['gift','4. プレゼント出現'],['ptcl','パーティクル更新'],['render','function renderPoints'],
+  ['rays','function starRays'],['present','function present'],['frame','function frame'],['lights','function updateLights']]){
+  REG[name]=findLine(key);
+}
+const SPAN={drop:12,ripple:16,grow:22,star:10,spiral:14,gift:10,ptcl:22,render:60,rays:22,present:34,frame:24,lights:12};
+let curLine=-1, codeTimer=0;
+function updateCode(dt){
+  codeTimer-=dt; if(codeTimer>0)return; codeTimer=0.085;
+  const ph=phaseName();
+  const main={drop:'drop',ripple:'ripple',spread:'grow',growing:'grow',star:'star',decorating:'spiral',gifts:'gift',complete:'lights'}[ph];
+  const seq=[main,'render',main,'ptcl','frame','present'];
+  const slot=Math.floor(T/1.3)%seq.length, reg=seq[slot];
+  const span=SPAN[reg]||10;
+  const pos=Math.floor((T%1.3)/1.3*span);
+  const ln=Math.min(SRC.length-1,REG[reg]+pos);
+  if(ln===curLine)return;
+  if(curLine>=0&&LINES[curLine])LINES[curLine].classList.remove('cur');
+  curLine=ln; LINES[ln].classList.add('cur');
+  const vh=codeView.clientHeight||150;
+  const ty=Math.max(0,ln*17-vh*0.45);
+  codeInner.style.transform='translateY('+(-ty)+'px)';
+}
+
+/* ============================================================
+   メインループ
+   ============================================================ */
+function frame(now){
+  requestAnimationFrame(frame);
+  if(!last)last=now;
+  let dt=(now-last)/1000; last=now;
+  if(dt>0.05)dt=0.05; if(dt<0)dt=0;
+  T+=dt; iter++;
+  if(dt>0)fpsS=fpsS*0.94+(1/dt)*0.06;
+  ang=0.9+T*0.3;
+  pitch=0.2+0.05*Math.sin(T*0.23);
+  ca=Math.cos(ang); sa=Math.sin(ang); cpit=Math.cos(pitch); spit=Math.sin(pitch);
+  zbuf.fill(1e9); chB.fill(0); glB.fill(0);
+  glows.length=0;
+  drawSky();
+  drawIllum();
+  updateLights();
+  updateGroups();
+  renderPoints();
+  drawReindeer(dt);
+  fx(dt);
+  starRays();
+  banner();
+  present();
+  status(dt);
+  updateCode(dt);
+}
+
+function restart(){
+  T=0; iter=0; splashed=false; starBurst=false; giftBurst=[]; headAng=0;
+  lastModel=model; model=pickModel(); buildSeed=(Math.random()*1e9)|0; SP=setView(); build();
+  PL.fill(0);
+  for(let i=0;i<NSNOW;i++){SY[i]=fxr()*4.2-0.1;}
+}
+cv.addEventListener('pointerdown',()=>{if(T>TL.DONE)restart();});
+window.addEventListener('keydown',e=>{if(e.key==='r'||e.key==='R')restart();});
+let rzT=0;
+window.addEventListener('resize',()=>{
+  clearTimeout(rzT);
+  rzT=setTimeout(()=>{const ns=layout();if(Math.abs(ns-SP)/SP>0.12){SP=ns;build();}},180);
+});
+
+model=pickModel(); buildSeed=(Math.random()*1e9)|0;
+SP=layout();
+build();
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
