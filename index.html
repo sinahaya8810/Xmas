@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>ASCII 3D Christmas Tree</title>
 <style>
-  html,body{margin:0;height:100%;background:#03050c;overflow:hidden;-webkit-user-select:none;user-select:none;touch-action:manipulation;}
+  html,body{margin:0;height:100%;background:#03050c;overflow:hidden;-webkit-user-select:none;user-select:none;touch-action:none;-webkit-touch-callout:none;overscroll-behavior:none;}
   #c{position:fixed;left:0;top:0;width:100%;display:block;}
   .fx{position:fixed;left:0;right:0;top:0;pointer-events:none;}
   .scan{background:repeating-linear-gradient(to bottom,rgba(255,255,255,.02) 0 1px,transparent 1px 3px);}
@@ -25,6 +25,21 @@
   .ln .no{display:inline-block;width:38px;text-align:right;padding-right:14px;color:#3b4252;}
   .ln.cur{background:rgba(255,70,90,.13);box-shadow:inset 2px 0 0 #ff5a6e;}
   .ln.cur .no{color:#ff8a98;}
+  #replay{position:fixed;top:calc(8px + env(safe-area-inset-top));right:calc(8px + env(safe-area-inset-right));z-index:10;
+    width:40px;height:40px;border-radius:10px;border:1px solid rgba(140,170,200,.35);background:rgba(10,16,30,.55);
+    color:#cfe3ff;font:22px/38px Menlo,Consolas,monospace;text-align:center;cursor:pointer;padding:0;
+    -webkit-tap-highlight-color:transparent;backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);
+    box-shadow:0 0 10px rgba(120,180,255,.15);transition:transform .25s,background .2s;}
+  #replay:hover{background:rgba(30,45,75,.75);}
+  #replay:active{transform:rotate(-180deg) scale(.92);}
+  #tap{position:fixed;left:0;top:0;width:100%;height:100%;pointer-events:none;z-index:9;}
+  #ffw{position:fixed;top:calc(12px + env(safe-area-inset-top));left:calc(12px + env(safe-area-inset-left));z-index:10;
+    font:12px/1 Menlo,Consolas,monospace;color:#ffd98a;letter-spacing:.08em;padding:6px 9px;border-radius:8px;
+    background:rgba(10,16,30,.55);border:1px solid rgba(255,210,120,.35);opacity:0;transition:opacity .25s;pointer-events:none;
+    text-shadow:0 0 8px rgba(255,200,90,.7);}
+  #sig{position:fixed;left:calc(10px + env(safe-area-inset-left));bottom:0;z-index:11;
+    font:11px/1 Menlo,Consolas,"DejaVu Sans Mono","Courier New",monospace;letter-spacing:.22em;color:rgba(225,235,255,.55);
+    pointer-events:none;text-shadow:0 0 6px rgba(150,190,255,.5);}
   .k{color:#c792ea}.f{color:#82aaff}.s{color:#c3e88d}.n{color:#f78c6c}.c{color:#546178;font-style:italic}.C{color:#ffcb6b}
 </style>
 </head>
@@ -33,6 +48,10 @@
 <div class="fx scan" id="scan"></div>
 <div class="fx vig" id="vig"></div>
 <div id="status"></div>
+<canvas id="tap"></canvas>
+<div id="ffw">&gt;&gt; x2</div>
+<div id="sig">HAYATE</div>
+<button id="replay" type="button" title="最初から" aria-label="最初から">↺</button>
 <div id="code"><div id="codeHead"><span>xmas_tree.js</span><span class="run"><span class="dot"></span><span id="runTxt">running</span></span></div><div id="codeView"><div id="codeInner"></div></div></div>
 <script id="main">
 (function(){
@@ -916,6 +935,7 @@ function layout(){
   CH_H=Math.max(220,VH-codeH-statusH);
   document.getElementById('code').style.height=codeH+'px';
   stEl.style.top=CH_H+'px'; stEl.style.height=statusH+'px';
+  document.getElementById('sig').style.bottom=(VH-CH_H+8)+'px';   // アニメーション画面の左下
   for(const id of ['scan','vig'])document.getElementById(id).style.height=CH_H+'px';
   cv.style.height=CH_H+'px';
   cv.width=Math.round(VW*dpr); cv.height=Math.round(CH_H*dpr);
@@ -1040,11 +1060,53 @@ function updateGroups(){
 }
 
 /* ---------- 点群のレンダリング（Zバッファ＋陰影） ---------- */
+/* ---------- サンタの「生きている」動き（呼吸・重心移動・首の動き・笑い） ---------- */
+let SA=false, sBr=0, sJig=0, sLx=0, sLz=0, hCy=1, hSy=0, hCp=1, hSp=0, hCr=1, hSr=0, hatSx=0, hatSz=0;
+function santaPose(){
+  SA=(model==='santa');
+  if(!SA)return;
+  const u=(T/4.2)%1;                                              // 呼吸：吸う4割・吐く6割
+  sBr=(u<0.4?smooth(0,0.4,u):1-smooth(0.4,1,u))*2-1;
+  const c=(T+3)%10.5;                                             // ときどき「ホッホッホー」とお腹を揺らして笑う
+  const env=(T>TL.GROW_END&&c<1.4)?Math.sin(Math.PI*c/1.4):0;
+  sJig=env*Math.sin(c*19);
+  sLx=0.011*Math.sin(T*0.47)+0.004*Math.sin(T*1.13);                // 重心をゆっくり左右・前後に移す
+  sLz=0.006*Math.sin(T*0.31+1.2);
+  const yaw=0.16*Math.sin(T*0.33)+0.05*Math.sin(T*0.71+0.5);       // あたりを見回す
+  const pit=0.035*sBr*-0.6+0.03*Math.sin(T*0.6)+0.05*env*Math.abs(Math.sin(c*9.5));   // 呼吸と笑いでうなずく
+  const rol=0.04*Math.sin(T*0.43+1)+0.012*sLx/0.011;               // 首をかしげる
+  hCy=Math.cos(yaw);hSy=Math.sin(yaw);hCp=Math.cos(pit);hSp=Math.sin(pit);hCr=Math.cos(rol);hSr=Math.sin(rol);
+  hatSx=0.03*Math.sin(T*1.25-0.6)-yaw*0.06;                         // 帽子の先は少し遅れて揺れる
+  hatSz=0.015*Math.sin(T*0.9);
+}
+
 function renderPoints(){
   for(let i=0;i<N;i++){
     const at=pAt[i]; if(T<at)continue;
     const g=pGrp[i]; const sc=gS[g]; if(sc<=0)continue;
-    const wx=gX[g]+pLx[i]*sc, wy=gY[g]+pLy[i]*sc, wz=gZ[g]+pLz[i]*sc;
+    let wx=gX[g]+pLx[i]*sc, wy=gY[g]+pLy[i]*sc, wz=gZ[g]+pLz[i]*sc;
+    if(SA&&wy>0.3&&pMat[i]!==MAT_GND){
+      const y0=wy;
+      // お腹と胸がふくらむ（呼吸＋笑いの揺れ）
+      const dyb=y0-1.05, wb=Math.exp(-dyb*dyb/0.16);
+      const ex=1+(0.03*sBr+0.014*sJig)*wb;
+      wx*=ex; wz=0.04+(wz-0.04)*ex;
+      // 吸うと肩と頭が少し上がる
+      wy+=0.02*sBr*smooth(1.1,1.6,y0)+0.009*sJig*wb;
+      // 首から上：見回す・うなずく・かしげる
+      const wh=(pMat[i]===MAT_SACK)?0:smooth(1.7,1.86,y0)*(wx*wx+(wz-0.04)*(wz-0.04)<0.3?1:0);
+      if(wh>0){
+        let dx=wx, dy=wy-1.8, dz=wz-0.03;
+        let t=dx*hCy+dz*hSy; dz=-dx*hSy+dz*hCy; dx=t;
+        t=dy*hCp-dz*hSp; dz=dy*hSp+dz*hCp; dy=t;
+        t=dx*hCr-dy*hSr; dy=dx*hSr+dy*hCr; dx=t;
+        wx=lerp(wx,dx,wh); wy=lerp(wy,dy+1.8,wh); wz=lerp(wz,dz+0.03,wh);
+        if(y0>2.2){const k2=smooth(2.25,2.6,y0);wx+=hatSx*k2;wz+=hatSz*k2;}
+      }
+      // 足は地面に置いたまま、上半身ほど大きく重心移動
+      const wl=smooth(0.3,1.0,y0);
+      wx+=sLx*y0*wl; wz+=sLz*y0*wl;
+    }
     const x1=wx*ca+wz*sa, z1=wz*ca-wx*sa, y1=wy-CY;
     const y2=y1*cpit+z1*spit, zz=z1*cpit-y1*spit+D;
     if(zz<0.3)continue;
@@ -1488,7 +1550,7 @@ function status(dt){
   const rot=((ang*180/Math.PI)%360+360)%360, tilt=pitch*180/Math.PI;
   const mm=String(Math.floor(T/60)).padStart(2,'0'), ss=(T%60).toFixed(2).padStart(5,'0');
   stEl.textContent=
-    'frame '+String(iter).padStart(6,'0')+' . t+'+mm+':'+ss+' . '+phaseName()+(T>TL.DONE?'  [tap: replay]':'')+'\n'+
+    'frame '+String(iter).padStart(6,'0')+' . t+'+mm+':'+ss+' . '+phaseName()+'  [↺ replay / edge hold x2]'+(speedCur>1.5?'  >> x2':'')+'\n'+
     'model '+model+'   rotation '+rot.toFixed(2).padStart(6)+'deg  tilt '+tilt.toFixed(1)+'deg   '+(model==='santa'?'details '+on+'/'+ORN_N+'  reindeer '+rd+'/4':(model==='tree'?'lights '+lit+'/'+NL+'  ornaments ':'lights '+lit+'/'+NL+'  details ')+on+'/'+ORN_N+'  gifts '+gn+'/'+GIFT_N)+'\n'+
     'points '+N.toLocaleString()+(model==='tree'?'  branches '+BRANCH_N:'')+'  glyphs '+drawn.toLocaleString()+'  particles '+aliveP+'  grid '+cols+'x'+rows;
   runTxt.textContent='running . '+Math.round(fpsS)+' fps';
@@ -1559,6 +1621,91 @@ function updateCode(dt){
 }
 
 /* ============================================================
+   タップ＆なぞりのキラキラ（画面全体）／画面端の長押しで2倍速
+   ============================================================ */
+const tcv=document.getElementById('tap'), tctx=tcv.getContext('2d');
+const ffwEl=document.getElementById('ffw');
+const MAXK=1400;
+const KX=new Float32Array(MAXK),KY=new Float32Array(MAXK),KVX=new Float32Array(MAXK),KVY=new Float32Array(MAXK),
+      KL=new Float32Array(MAXK),KM=new Float32Array(MAXK),KC=new Uint8Array(MAXK),KS=new Float32Array(MAXK);
+let kHead=0;
+const KCOL=[[255,255,255],[255,214,120],[160,230,255],[255,170,220],[200,255,210]];
+function kEmit(x,y,vx,vy,life){
+  const k=kHead;kHead=(kHead+1)%MAXK;
+  KX[k]=x;KY[k]=y;KVX[k]=vx;KVY[k]=vy;KL[k]=life;KM[k]=life;KC[k]=Math.floor(fxr()*KCOL.length);KS[k]=fxr();
+}
+function kBurst(x,y){
+  for(let q=0;q<34;q++){const a=fxr()*PI2,v=20+fxr()*110;kEmit(x,y,Math.cos(a)*v,Math.sin(a)*v-20,1.4+fxr()*1.4);}
+}
+function kTrail(x0,y0,x1,y1){
+  const d=Math.hypot(x1-x0,y1-y0), n=Math.max(1,Math.ceil(d/7));
+  for(let i=1;i<=n;i++){const t=i/n,x=lerp(x0,x1,t),y=lerp(y0,y1,t);
+    for(let q=0;q<2;q++)kEmit(x+(fxr()-0.5)*8,y+(fxr()-0.5)*8,(fxr()-0.5)*30,(fxr()-0.5)*30-8,1.2+fxr()*1.3);}
+}
+const ptrs=new Map();
+let speedCur=1;
+function edgeZone(x,y){const m=clamp(VW*0.12,36,80);return x<m||x>VW-m||y<m||y>VH-m;}
+function onDown(e){
+  if(e.target&&e.target.id==='replay')return;
+  ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY,sx:e.clientX,sy:e.clientY,t0:performance.now(),edge:edgeZone(e.clientX,e.clientY),moved:false});
+  kBurst(e.clientX,e.clientY);
+}
+function onMove(e){
+  const p=ptrs.get(e.pointerId); if(!p)return;
+  kTrail(p.x,p.y,e.clientX,e.clientY);
+  p.x=e.clientX;p.y=e.clientY;
+  if(Math.hypot(p.x-p.sx,p.y-p.sy)>30)p.moved=true;
+}
+function onUp(e){ptrs.delete(e.pointerId);}
+window.addEventListener('pointerdown',onDown);
+window.addEventListener('pointermove',onMove);
+window.addEventListener('pointerup',onUp);
+window.addEventListener('pointercancel',onUp);
+window.addEventListener('contextmenu',e=>e.preventDefault());
+function updateSpeed(dt){
+  const now=performance.now(); let fast=false;
+  for(const p of ptrs.values()){if(p.edge&&!p.moved&&now-p.t0>380)fast=true;}
+  speedCur+=((fast?2:1)-speedCur)*Math.min(1,dt*8);
+  ffwEl.style.opacity=speedCur>1.5?'1':'0';
+}
+function drawTouch(dt){
+  if(tcv.width!==Math.round(VW*dpr)||tcv.height!==Math.round(VH*dpr)){tcv.width=Math.round(VW*dpr);tcv.height=Math.round(VH*dpr);}
+  tctx.setTransform(dpr,0,0,dpr,0,0);
+  tctx.clearRect(0,0,VW,VH);
+  const cells=new Map();                         // 1マス1文字（重ならないよう一番明るいものだけ）
+  for(let k=0;k<MAXK;k++){
+    if(KL[k]<=0)continue;
+    KL[k]-=dt; if(KL[k]<=0)continue;
+    const dr=Math.pow(0.25,dt);
+    KVX[k]*=dr;KVY[k]*=dr;KVY[k]+=10*dt;         // ゆっくり漂いながら少しだけ沈む
+    KX[k]+=KVX[k]*dt;KY[k]+=KVY[k]*dt;
+    const lf=KL[k]/KM[k];
+    const col=Math.floor((KX[k]-offX)/cw), row=Math.floor((KY[k]-offY)/chh);
+    if(col<0||col>=cols||row<0)continue;
+    const key=row*cols+col, br=Math.pow(lf,0.8)*(0.65+0.35*Math.sin(T*9+KS[k]*20));
+    const o=cells.get(key); if(o&&o.br>=br)continue;
+    cells.set(key,{col,row,br,k,lf});
+  }
+  tctx.globalCompositeOperation='lighter';
+  for(const c of cells.values()){
+    if(c.lf<0.35||(c.k%3))continue;
+    const C=KCOL[KC[c.k]], s=cw*(3+4*c.br);
+    tctx.globalAlpha=Math.min(1,c.br*0.55);
+    tctx.drawImage(SPR[[0,7,6,5,3][KC[c.k]]],offX+(c.col+0.5)*cw-s/2,offY+(c.row+0.5)*chh-s/2,s,s);
+  }
+  tctx.globalAlpha=1; tctx.globalCompositeOperation='source-over';
+  tctx.font=fontStr; tctx.textBaseline='middle'; tctx.textAlign='center';
+  for(const c of cells.values()){
+    const C=KCOL[KC[c.k]], lf=c.lf, b=c.br;
+    const tw=hash(c.k*3.7+Math.floor(T*12));
+    const ch=tw>0.9?'*':lf>0.7?'*':lf>0.45?'+':lf>0.22?(tw>0.5?"'":':'):'.';
+    const w=lf*lf*90;
+    tctx.fillStyle='rgb('+Math.min(255,C[0]*b+w|0)+','+Math.min(255,C[1]*b+w|0)+','+Math.min(255,C[2]*b+w|0)+')';
+    tctx.fillText(ch,offX+(c.col+0.5)*cw,offY+(c.row+0.5)*chh,cw*0.98);
+  }
+}
+
+/* ============================================================
    メインループ
    ============================================================ */
 function frame(now){
@@ -1566,7 +1713,9 @@ function frame(now){
   if(!last)last=now;
   let dt=(now-last)/1000; last=now;
   if(dt>0.05)dt=0.05; if(dt<0)dt=0;
-  T+=dt; iter++;
+  updateSpeed(dt);
+  const sdt=dt*speedCur;                         // 画面端の長押し中は2倍速
+  T+=sdt; iter++;
   if(dt>0)fpsS=fpsS*0.94+(1/dt)*0.06;
   ang=0.9+T*0.3;
   pitch=0.2+0.05*Math.sin(T*0.23);
@@ -1577,14 +1726,16 @@ function frame(now){
   drawIllum();
   updateLights();
   updateGroups();
+  santaPose();
   renderPoints();
-  drawReindeer(dt);
-  fx(dt);
+  drawReindeer(sdt);
+  fx(sdt);
   starRays();
   banner();
   present();
+  drawTouch(dt);
   status(dt);
-  updateCode(dt);
+  updateCode(sdt);
 }
 
 function restart(){
@@ -1593,7 +1744,7 @@ function restart(){
   PL.fill(0);
   for(let i=0;i<NSNOW;i++){SY[i]=fxr()*4.2-0.1;}
 }
-cv.addEventListener('pointerdown',()=>{if(T>TL.DONE)restart();});
+document.getElementById('replay').addEventListener('click',e=>{e.stopPropagation();restart();});   // 完成前でもいつでも最初から
 window.addEventListener('keydown',e=>{if(e.key==='r'||e.key==='R')restart();});
 let rzT=0;
 window.addEventListener('resize',()=>{
